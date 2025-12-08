@@ -93,19 +93,19 @@ typedef struct aeFiredEvent {
     int mask;
 } aeFiredEvent;
 
-/* State of an event based program */
+/* State of an event based program 事件循环的核心结构体 */
 typedef struct aeEventLoop {
-    int maxfd;   /* highest file descriptor currently registered */
-    int setsize; /* max number of file descriptors tracked */
-    long long timeEventNextId;
-    time_t lastTime;     /* Used to detect system clock skew */
-    aeFileEvent *events; /* Registered events */
-    aeFiredEvent *fired; /* Fired events */
-    aeTimeEvent *timeEventHead;
-    int stop;
-    void *apidata; /* This is used for polling API specific data */
-    aeBeforeSleepProc *beforesleep;
-    aeBeforeSleepProc *aftersleep;
+    int maxfd;   /* highest file descriptor currently registered  当前注册的最大文件描述符 */
+    int setsize; /* max number of file descriptors tracked 文件描述符数组容量，决定了最多能注册多少个 fd */
+    long long timeEventNextId;  /* 下一个定时事件的 ID */
+    time_t lastTime;     /* Used to detect system clock skew 上一次调用事件循环的时间 */
+    aeFileEvent *events; /* Registered events 文件事件数组，每个元素记录 fd 上注册的读/写事件及回调函数 */
+    aeFiredEvent *fired; /* Fired events 已就绪事件数组（事件触发后存放到这里） */
+    aeTimeEvent *timeEventHead; /* 定时事件链表头，用于实现 aeCreateTimeEvent（定时任务） */
+    int stop;   /* 标志事件循环是否退出，调用 aeStop 会置 1。 */
+    void *apidata; /* This is used for polling API specific data 平台相关 I/O 多路复用数据，例如 epoll fd */
+    aeBeforeSleepProc *beforesleep; /* 事件循环每次 sleep 前执行的回调 */
+    aeBeforeSleepProc *aftersleep;  /* 事件循环每次 sleep 后执行的回调 */
 } aeEventLoop;
 
 /* Prototypes */

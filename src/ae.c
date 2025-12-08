@@ -45,7 +45,9 @@
 #include "config.h"
 
 /* Include the best multiplexing layer supported by this system.
- * The following should be ordered by performances, descending. */
+ * The following should be ordered by performances, descending. 
+ * 通过宏判断平台，以此决定使用哪种multiplex实现
+ */
 #ifdef HAVE_EVPORT
 #include "ae_evport.c"
 #else
@@ -76,6 +78,7 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
     eventLoop->maxfd = -1;
     eventLoop->beforesleep = NULL;
     eventLoop->aftersleep = NULL;
+    //设置eventloop的apidata，linux下，调用 epoll_create 创建 epoll fd
     if (aeApiCreate(eventLoop) == -1) goto err;
     /* Events with mask == AE_NONE are not set. So let's initialize the
      * vector with it. */

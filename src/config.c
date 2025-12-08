@@ -188,6 +188,7 @@ void loadServerConfigFromString(char *config) {
         if (lines[i][0] == '#' || lines[i][0] == '\0') continue;
 
         /* Split into arguments */
+        //把一行输入字符串解析成一个参数数组（argv）
         argv = sdssplitargs(lines[i],&argc);
         if (argv == NULL) {
             err = "Unbalanced quotes in configuration line";
@@ -202,6 +203,8 @@ void loadServerConfigFromString(char *config) {
         sdstolower(argv[0]);
 
         /* Execute config directives */
+        //参数名是否匹配，如匹配则设值
+        //参数值异常时使用goto跳出大方法
         if (!strcasecmp(argv[0],"timeout") && argc == 2) {
             server.maxidletime = atoi(argv[1]);
             if (server.maxidletime < 0) {
@@ -851,15 +854,18 @@ void loadServerConfig(char *filename, char *options) {
                 exit(1);
             }
         }
+        //fgets逐行读入配置文件中的所有配置项
         while(fgets(buf,CONFIG_MAX_LINE+1,fp) != NULL)
             config = sdscat(config,buf);
         if (fp != stdin) fclose(fp);
     }
     /* Append the additional options */
+    //如果有命令行参数，则追加
     if (options) {
         config = sdscat(config,"\n");
         config = sdscat(config,options);
     }
+    //按照配置项的值设置server的参数
     loadServerConfigFromString(config);
     sdsfree(config);
 }

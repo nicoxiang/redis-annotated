@@ -43,16 +43,23 @@ extern const char *SDS_NOINIT;
 typedef char *sds;
 
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
- * However is here to document the layout of type 5 SDS strings. */
+ * However is here to document the layout of type 5 SDS strings.
+ * SDS之所以设计不同的结构头（即不同类型），是为了能灵活保存不同大小的字符串，从而有效节省内存空间。
+ * 因为在保存不同大小的字符串时，结构头占用的内存空间也不一样，这样一来，在保存小字符串时，结构头占用空间也比较少
+ * __attribute__ ((__packed__)) 告诉编译器，在编译sdshdr8结构时，不要使用字节对齐的方式，而是采用紧凑的方式分配内存。
+ */
 struct __attribute__ ((__packed__)) sdshdr5 {
     unsigned char flags; /* 3 lsb of type, and 5 msb of string length */
     char buf[];
 };
 struct __attribute__ ((__packed__)) sdshdr8 {
+    /*len 表示当前字符串的已用长度（即逻辑长度），
+     *alloc 表示为该字符串分配的总缓冲区大小（不包括头部和末尾的 '\0'）。
+     *sdsavail(s) = alloc - len，就是还能在不重分配的情况下追加的字节数。*/
     uint8_t len; /* used */
     uint8_t alloc; /* excluding the header and null terminator */
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
-    char buf[];
+    char buf[];  /* 灵活数组成员（Flexible Array Member, FAM） */
 };
 struct __attribute__ ((__packed__)) sdshdr16 {
     uint16_t len; /* used */
@@ -80,7 +87,8 @@ struct __attribute__ ((__packed__)) sdshdr64 {
 #define SDS_TYPE_64 4
 #define SDS_TYPE_MASK 7
 #define SDS_TYPE_BITS 3
-#define SDS_HDR_VAR(T,s) struct sdshdr##T *sh = (void*)((s)-(sizeof(struct sdshdr##T)));
+/* 宏拼接操作符（token-pasting）使用，把 指向字符串的指针 s 转换回 指向其头部结构体的指针 sh */
+#define SDS_HDR_VAR(T,s) struct sdshdr##T *sh = (void*)((s)-(sizeof(struct sdshdr##T)));    
 #define SDS_HDR(T,s) ((struct sdshdr##T *)((s)-(sizeof(struct sdshdr##T))))
 #define SDS_TYPE_5_LEN(f) ((f)>>SDS_TYPE_BITS)
 

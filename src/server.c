@@ -2033,9 +2033,11 @@ void resetServerStats(void) {
     server.aof_delayed_fsync = 0;
 }
 
+/* 初始化server资源管理的主要结构，同时会初始化数据库启动状态，以及完成server监听IP和端口的设置 */
 void initServer(void) {
     int j;
 
+    //设置信号处理handlers
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
     setupSignalHandlers();
@@ -2065,6 +2067,7 @@ void initServer(void) {
 
     createSharedObjects();
     adjustOpenFilesLimit();
+    //创建事件循环框架
     server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
     if (server.el == NULL) {
         serverLog(LL_WARNING,
@@ -2075,6 +2078,7 @@ void initServer(void) {
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
+    //开始监听设置的网络端口
     if (server.port != 0 &&
         listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
         exit(1);
@@ -2099,15 +2103,20 @@ void initServer(void) {
 
     /* Create the Redis databases, and initialize other internal state. */
     for (j = 0; j < server.dbnum; j++) {
+        //创建全局哈希表
         server.db[j].dict = dictCreate(&dbDictType,NULL);
+        //创建过期key的信息表
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
+        //为被BLPOP阻塞的key创建信息表
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
+        //为将执行PUSH的阻塞key创建信息表
         server.db[j].ready_keys = dictCreate(&objectKeyPointerValueDictType,NULL);
-        server.db[j].watched_keys = dictCreate(&keylistDictType,NULL);
+        //为被MULTI/WATCH操作监听的key创建信息表
         server.db[j].id = j;
         server.db[j].avg_ttl = 0;
         server.db[j].defrag_later = listCreate();
     }
+    //为内存淘汰策略分配并初始化一个候选池（eviction pool），用于挑选要被逐出的 key。
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */
     server.pubsub_channels = dictCreate(&keylistDictType,NULL);
     server.pubsub_patterns = listCreate();
@@ -2128,6 +2137,7 @@ void initServer(void) {
     server.rdb_save_time_last = -1;
     server.rdb_save_time_start = -1;
     server.dirty = 0;
+    //执行CONFIG RESETSTAT时，启动时，重置server运行状态信息
     resetServerStats();
     /* A few stats we don't want to reset: server startup time, and peak mem. */
     server.stat_starttime = time(NULL);
@@ -2153,7 +2163,9 @@ void initServer(void) {
     }
 
     /* Create an event handler for accepting new connections in TCP and Unix
-     * domain sockets. */
+     * domain sockets. 
+     * 为每一个监听的IP设置连接事件的处理函数acceptTcpHandler
+     */
     for (j = 0; j < server.ipfd_count; j++) {
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
             acceptTcpHandler,NULL) == AE_ERR)
@@ -4199,6 +4211,9 @@ int redisSupervisedSystemd(void) {
     return 1;
 }
 
+/*
+ * 是否由进程管理器systemd/upstart管理
+*/
 int redisIsSupervised(int mode) {
     if (mode == SUPERVISED_AUTODETECT) {
         const char *upstart_job = getenv("UPSTART_JOB");
@@ -4253,7 +4268,10 @@ int main(int argc, char **argv) {
 #ifdef INIT_SETPROCTITLE_REPLACEMENT
     spt_init(argc, argv);
 #endif
+    //把字符串比较规则设置为 操作系统当前环境的 locale
     setlocale(LC_COLLATE,"");
+    //初始化和更新进程的时区信息,调用后，C 库里的时间转换函数
+    //如 localtime()、strftime() 等）才会使用正确的时区规则
     tzset(); /* Populates 'timezone' global. */
     zmalloc_set_oom_handler(redisOutOfMemoryHandler);
     srand(time(NULL)^getpid());
@@ -4262,7 +4280,9 @@ int main(int argc, char **argv) {
     char hashseed[16];
     getRandomHexChars(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed((uint8_t*)hashseed);
+    //检查是否是哨兵模式启动
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+    //为server的各种参数设置默认值，默认值基本都是macro constant
     initServerConfig();
     moduleInitModulesSystem();
 
@@ -4271,6 +4291,7 @@ int main(int argc, char **argv) {
     server.executable = getAbsolutePath(argv[0]);
     server.exec_argv = zmalloc(sizeof(char*)*(argc+1));
     server.exec_argv[argc] = NULL;
+    //保存命令行参数
     for (j = 0; j < argc; j++) server.exec_argv[j] = zstrdup(argv[j]);
 
     /* We need to init sentinel right now as parsing the configuration file
@@ -4283,7 +4304,9 @@ int main(int argc, char **argv) {
 
     /* Check if we need to start in redis-check-rdb/aof mode. We just execute
      * the program main. However the program is part of the Redis executable
-     * so that we can easily execute an RDB check on loading errors. */
+     * so that we can easily execute an RDB check on loading errors. 
+     * 检查启动程序名是否是./redis-check-rdb或./redis-check-aof，如果是，则检查/修复 RDB/AOF 文件完整性
+     */
     if (strstr(argv[0],"redis-check-rdb") != NULL)
         redis_check_rdb_main(argc,argv,NULL);
     else if (strstr(argv[0],"redis-check-aof") != NULL)
@@ -4310,7 +4333,8 @@ int main(int argc, char **argv) {
             }
         }
 
-        /* First argument is the config file name? */
+        /* First argument is the config file name? 
+        检查第一个参数，用户是否手动指定了配置文件位置 */
         if (argv[j][0] != '-' || argv[j][1] != '-') {
             configfile = argv[j];
             server.configfile = getAbsolutePath(configfile);
@@ -4326,6 +4350,7 @@ int main(int argc, char **argv) {
          * string "port 6380\n" to be parsed after the actual file name
          * is parsed, if any. */
         while(j != argc) {
+            //如果参数以 "--" 开头（长选项名），是选项名
             if (argv[j][0] == '-' && argv[j][1] == '-') {
                 /* Option name */
                 if (!strcmp(argv[j], "--check-rdb")) {
@@ -4337,6 +4362,7 @@ int main(int argc, char **argv) {
                 options = sdscat(options,argv[j]+2);
                 options = sdscat(options," ");
             } else {
+                //不以 "--" 开头，是选项值
                 /* Option argument */
                 options = sdscatrepr(options,argv[j],strlen(argv[j]));
                 options = sdscat(options," ");
@@ -4351,6 +4377,10 @@ int main(int argc, char **argv) {
             exit(1);
         }
         resetServerSaveParams();
+        /* 对命令行参数和配置文件中的参数进行合并处理
+         * filename 指向要读取的配置文件路径（可以为 NULL 或 "-" 表示不读文件或从 stdin 读），
+         * options 是要附加在文件末尾、一起解析的额外配置字符串（可以为 NULL）
+         */
         loadServerConfig(configfile,options);
         sdsfree(options);
     }
@@ -4370,10 +4400,14 @@ int main(int argc, char **argv) {
         serverLog(LL_WARNING, "Configuration loaded");
     }
 
+    //是否由进程管理器systemd/upstart管理
     server.supervised = redisIsSupervised(server.supervised_mode);
+    //是否是守护进程
     int background = server.daemonize && !server.supervised;
+    //TODO:调用fork
     if (background) daemonize();
 
+    //初始化server资源管理的主要结构，同时会初始化数据库启动状态，以及完成server监听IP和端口的设置
     initServer();
     if (background || server.pidfile) createPidFile();
     redisSetProcTitle(argv[0]);
@@ -4403,7 +4437,9 @@ int main(int argc, char **argv) {
     #endif /* __arm64__ */
     #endif /* __linux__ */
         moduleLoadFromQueue();
+        //server初始化最后阶段执行，比如初始化后台线程
         InitServerLast();
+        //从磁盘上加载AOF或者是RDB文件，以便恢复之前的数据
         loadDataFromDisk();
         if (server.cluster_enabled) {
             if (verifyClusterConfigWithData() == C_ERR) {
@@ -4427,8 +4463,11 @@ int main(int argc, char **argv) {
         serverLog(LL_WARNING,"WARNING: You specified a maxmemory value that is less than 1MB (current value is %llu bytes). Are you sure this is what you really want?", server.maxmemory);
     }
 
+    //设置每次进入事件循环前server需要执行的操作
     aeSetBeforeSleepProc(server.el,beforeSleep);
+    //设置每次事件循环结束后server需要执行的操作
     aeSetAfterSleepProc(server.el,afterSleep);
+    //进入事件驱动框架，开始循环处理各种触发的事件。
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
     return 0;

@@ -31,6 +31,16 @@
 
 #include <sys/epoll.h>
 
+/*aeApiState 的核心作用是：
+1. 封装平台相关 I/O 状态
+    对上层的 aeEventLoop 隐藏底层差异
+    上层只关心文件事件（aeCreateFileEvent、AE_READABLE/WRITABLE）
+2. 保存就绪事件
+    调用 epoll_wait / select 返回的就绪事件，会存放到 aeApiState 内部
+    再由 aeEventLoop 拷贝到 fired[] 执行回调
+3. 动态分配或管理事件集合
+    比如 epoll 的 struct epoll_event *events
+    需要根据 setsize 分配内存 */
 typedef struct aeApiState {
     int epfd;
     struct epoll_event *events;
