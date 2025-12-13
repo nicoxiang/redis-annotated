@@ -776,6 +776,11 @@ int incrementallyRehash(int dbid) {
  * memory pages are copied). The goal of this function is to update the ability
  * for dict.c to resize the hash tables accordingly to the fact we have o not
  * running childs. */
+
+ /**
+  * 当 Redis 的后台子进程（例如 RDB 或 AOF 保存进程）结束时，会调用 updateDictResizePolicy()。
+  * 它会根据当前是否有运行中的子进程，决定 是否允许哈希表扩容。
+  */
 void updateDictResizePolicy(void) {
     if (server.rdb_child_pid == -1 && server.aof_child_pid == -1)
         dictEnableResize();
