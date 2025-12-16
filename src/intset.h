@@ -33,8 +33,17 @@
 #include <stdint.h>
 
 typedef struct intset {
+    /**
+     * 用来表示当前存储整数的类型（16/32/64位）
+     */
     uint32_t encoding;
+    /**
+     * 当前 intset 中元素个数
+     */
     uint32_t length;
+    /**
+     * 可变长度数组，存储整数元素（按 encoding 类型）
+     */
     int8_t contents[];
 } intset;
 

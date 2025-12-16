@@ -614,12 +614,48 @@ typedef struct RedisModuleDigest {
 
 #define OBJ_SHARED_REFCOUNT INT_MAX
 typedef struct redisObject {
+    /**
+     * redisObject的数据类型，是应用程序在Redis中保存的数据类型，包括String、List、Hash等。
+     * type决定“对外是什么”
+     * 
+     * 注意以下多个字段都是bit-field
+     */
     unsigned type:4;
+    /**
+     * redisObject的对象底层存储编码
+     * encoding 决定“底层怎么存”
+     * 
+     * string对象的encoding包括：
+     * OBJ_ENCODING_INT ，整数优化，ptr指向long
+     * OBJ_ENCODING_EMBSTR，小字符串嵌入式，ptr指向一整块内存
+     * OBJ_ENCODING_RAW，普通字符串，ptr指向SDS
+     * 
+     * list对象的encoding包括：
+     * OBJ_ENCODING_QUICKLIST，5.0 已经没有 ZIPLIST / LINKEDLIST 作为 LIST 的 encoding 了
+     * 
+     * hash对象的encoding包括：
+     * OBJ_ENCODING_ZIPLIST，小hash优化
+     * OBJ_ENCODING_HT
+     */
     unsigned encoding:4;
+    /**
+     * maxmemory-policy是LRU时，表示相对于全局LRU时钟的间隔时间（idle）
+     * maxmemory-policy是LFU时，
+     * 高 16 位：上一次衰减时间（last decay time）
+     * 低 8 位：实际访问频率计数器（0~255）
+     */
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
                             * and most significant 16 bits access time). */
+    /**
+     * 引用计数 
+     * 4bytes
+     * */                       
     int refcount;
+    /**
+     * 指向值的指针
+     * 8bytes
+     */
     void *ptr;
 } robj;
 

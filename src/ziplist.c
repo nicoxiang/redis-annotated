@@ -340,23 +340,33 @@ unsigned int zipIntSize(unsigned char encoding) {
  *
  * The function returns the number of bytes used by the encoding/length
  * header stored in 'p'. */
+
+ /**
+  * 把当前 entry 的encoding写入 entry 头部
+  */
 unsigned int zipStoreEntryEncoding(unsigned char *p, unsigned char encoding, unsigned int rawlen) {
     unsigned char len = 1, buf[5];
 
     if (ZIP_IS_STR(encoding)) {
         /* Although encoding is given it may not be set for strings,
          * so we determine it here using the raw length. */
+        //字符串长度小于等于63字节（16进制为0x3f）
         if (rawlen <= 0x3f) {
             if (!p) return len;
+            //共1byte，高2位是00
             buf[0] = ZIP_STR_06B | rawlen;
+        //字符串长度小于等于16383字节（16进制为0x3fff）
         } else if (rawlen <= 0x3fff) {
             len += 1;
             if (!p) return len;
+            //共2byte，高2位是01
             buf[0] = ZIP_STR_14B | ((rawlen >> 8) & 0x3f);
             buf[1] = rawlen & 0xff;
+        //字符串长度大于16383字节    
         } else {
             len += 4;
             if (!p) return len;
+            //共4byte，高2位是10，byte[0] 只表示类型，后 4 字节是真实长度
             buf[0] = ZIP_STR_32B;
             buf[1] = (rawlen >> 24) & 0xff;
             buf[2] = (rawlen >> 16) & 0xff;
@@ -366,10 +376,12 @@ unsigned int zipStoreEntryEncoding(unsigned char *p, unsigned char encoding, uns
     } else {
         /* Implies integer encoding, so length is always 1. */
         if (!p) return len;
+        // 整数编码，encoding 已经包含类型信息
         buf[0] = encoding;
     }
 
     /* Store this length at p. */
+    //正式把构建好的buf encoding写入
     memcpy(p,buf,len);
     return len;
 }
@@ -405,25 +417,50 @@ unsigned int zipStoreEntryEncoding(unsigned char *p, unsigned char encoding, uns
 
 /* Encode the length of the previous entry and write it to "p". This only
  * uses the larger encoding (required in __ziplistCascadeUpdate). */
+
+ /**
+  * ziplist 级联更新的问题是什么？
+  * 假设：
+  * 原来 prevlen 是 1 字节
+  * 因为前一个 entry 变大 → 必须扩成 5 字节
+  * 当前 entry 变大 → 影响下一个 entry
+  * 如果后面某个 entry：
+  *     prevlen 可能“又小于 254”
+  *     如果允许缩回 1 字节 → 会产生反向级联
+  * 
+  * Redis 的策略：
+  * 在 cascade update 中，一旦 entry 被迫扩为 5 字节 prevlen，后续所有 prevlen 统一使用 large 编码，不再做判断
+  */
 int zipStorePrevEntryLengthLarge(unsigned char *p, unsigned int len) {
     if (p != NULL) {
+        //将prevlen的第1字节设置为ZIP_BIG_PREVLEN，即254
         p[0] = ZIP_BIG_PREVLEN;
+        //后面 4 个字节才是真正的长度
         memcpy(p+1,&len,sizeof(len));
         memrev32ifbe(p+1);
     }
+    //固定返回5
     return 1+sizeof(len);
 }
 
 /* Encode the length of the previous entry and write it to "p". Return the
  * number of bytes needed to encode this length if "p" is NULL. */
+/**
+ * 把“前一个 entry 的长度 prevlen”编码并写入当前 entry 的开头
+ * 
+ * 假设我们统一使用4字节记录prevlen，如果前一个列表项只是一个字符串“redis”，长度为5个字节，
+ * 那么我们用1个字节（8 bits）就能表示256字节长度（2的8次方等于256）的字符串了。此时，prevlen用4字节记录，其中就有3字节是浪费掉了
+ */
 unsigned int zipStorePrevEntryLength(unsigned char *p, unsigned int len) {
     if (p == NULL) {
         return (len < ZIP_BIG_PREVLEN) ? 1 : sizeof(len)+1;
     } else {
+        //前一个entry是否小于254 bytes，如果是，preEntryLength就用1byte即可
         if (len < ZIP_BIG_PREVLEN) {
             p[0] = len;
             return 1;
         } else {
+            //否则，调用zipStorePrevEntryLengthLarge进行编码
             return zipStorePrevEntryLengthLarge(p,len);
         }
     }
@@ -488,6 +525,11 @@ unsigned int zipRawEntryLength(unsigned char *p) {
 
 /* Check if string pointed to by 'entry' can be encoded as an integer.
  * Stores the integer value in 'v' and its encoding in 'encoding'. */
+
+ /**
+  * 尝试把字符串 encoded为 int，如果可以返回1，否则返回0
+  * 如果转换成功，encoding字段保存具体的ziplist int encoding
+  */
 int zipTryEncoding(unsigned char *entry, unsigned int entrylen, long long *v, unsigned char *encoding) {
     long long value;
 
@@ -587,6 +629,21 @@ void zipEntry(unsigned char *p, zlentry *e) {
 
 /* Create a new empty ziplist. */
 unsigned char *ziplistNew(void) {
+    /**
+     * ZIPLIST_HEADER_SIZE       (sizeof(uint32_t)*2+sizeof(uint16_t))
+     * 32bits total bytes count
+     * 32bits last item offset
+     * 16bits number of items fields
+     * zltail 指向「最后一个 entry 的起始位置」
+     * 
+     * ZIPLIST_END_SIZE        (sizeof(uint8_t))
+     * 1byte size of the "end of ziplist" entry
+     * 
+     * +---------+---------+--------+------+
+     * | zlbytes | zltail  | zllen  | 0xFF |
+     * +---------+---------+--------+------+
+     *   4B        4B        2B      1B
+     */
     unsigned int bytes = ZIPLIST_HEADER_SIZE+ZIPLIST_END_SIZE;
     unsigned char *zl = zmalloc(bytes);
     ZIPLIST_BYTES(zl) = intrev32ifbe(bytes);

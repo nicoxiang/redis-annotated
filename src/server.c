@@ -1446,6 +1446,9 @@ void afterSleep(struct aeEventLoop *eventLoop) {
 
 /* =========================== Server initialization ======================== */
 
+/**
+ * 创建共享对象
+ */
 void createSharedObjects(void) {
     int j;
 

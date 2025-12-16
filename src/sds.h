@@ -44,22 +44,37 @@ typedef char *sds;
 
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
  * However is here to document the layout of type 5 SDS strings.
+ */
+/**
  * SDS之所以设计不同的结构头（即不同类型），是为了能灵活保存不同大小的字符串，从而有效节省内存空间。
  * 因为在保存不同大小的字符串时，结构头占用的内存空间也不一样，这样一来，在保存小字符串时，结构头占用空间也比较少
- * __attribute__ ((__packed__)) 告诉编译器，在编译sdshdr8结构时，不要使用字节对齐的方式，而是采用紧凑的方式分配内存。
+ * __attribute__ ((__packed__)) 告诉编译器，在编译sdshdr8结构时，不要使用字节对齐的方式（禁止编译器为结构体成员插入padding），而是采用紧凑的方式分配内存。
  */
 struct __attribute__ ((__packed__)) sdshdr5 {
     unsigned char flags; /* 3 lsb of type, and 5 msb of string length */
     char buf[];
 };
 struct __attribute__ ((__packed__)) sdshdr8 {
-    /*len 表示当前字符串的已用长度（即逻辑长度），
-     *alloc 表示为该字符串分配的总缓冲区大小（不包括头部和末尾的 '\0'）。
-     *sdsavail(s) = alloc - len，就是还能在不重分配的情况下追加的字节数。*/
+    /**
+     * len 表示当前字符串的已用长度（即逻辑长度）
+     * uint8_t 最大值255
+     * 1byte
+     */
     uint8_t len; /* used */
+    /**
+     * alloc 表示为该字符串分配的总缓冲区大小（不包括头部和末尾的 '\0'）
+     * 1byte
+     */
     uint8_t alloc; /* excluding the header and null terminator */
+    /**
+     * sdsavail(s) = alloc - len，就是还能在不重分配的情况下追加的字节数。
+     * 1byte
+     */
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
-    char buf[];  /* 灵活数组成员（Flexible Array Member, FAM） */
+    /**
+     * 灵活数组成员（Flexible Array Member, FAM）
+     */
+    char buf[];
 };
 struct __attribute__ ((__packed__)) sdshdr16 {
     uint16_t len; /* used */

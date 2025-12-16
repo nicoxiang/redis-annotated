@@ -37,7 +37,9 @@
 #endif
 
 /* ===================== Creation and parsing of objects ==================== */
-
+/**
+ * 创建redisObject的通用构造函数
+ */
 robj *createObject(int type, void *ptr) {
     robj *o = zmalloc(sizeof(*o));
     o->type = type;
@@ -74,6 +76,10 @@ robj *makeObjectShared(robj *o) {
 
 /* Create a string object with encoding OBJ_ENCODING_RAW, that is a plain
  * string object where o->ptr points to a proper sds string. */
+/**
+ * 注意，创建RawString时需要分别给redisObject和SDS分别分配一次内存
+ * 这样就既带来了内存分配开销，同时也会导致内存碎片
+ */
 robj *createRawStringObject(const char *ptr, size_t len) {
     return createObject(OBJ_STRING, sdsnewlen(ptr,len));
 }
@@ -81,12 +87,19 @@ robj *createRawStringObject(const char *ptr, size_t len) {
 /* Create a string object with encoding OBJ_ENCODING_EMBSTR, that is
  * an object where the sds string is actually an unmodifiable string
  * allocated in the same chunk as the object itself. */
+/**
+ * 创建embstr
+ * embstr是连续内存布局，不可扩容，任何修改都要转换成 RAW
+ */
 robj *createEmbeddedStringObject(const char *ptr, size_t len) {
     robj *o = zmalloc(sizeof(robj)+sizeof(struct sdshdr8)+len+1);
+    //o+1代表o+sizeof(robj)，也就是跳过一个 redisObject
     struct sdshdr8 *sh = (void*)(o+1);
 
     o->type = OBJ_STRING;
     o->encoding = OBJ_ENCODING_EMBSTR;
+    //ptr直接指向 buf，而不是指向 sh
+    //sh是刚才介绍的指向SDS结构的指针，属于sdshdr8类型。而sh+1表示把内存地址从sh起始地址开始移动一定的大小，移动的距离等于sdshdr8结构体的大小
     o->ptr = sh+1;
     o->refcount = 1;
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
@@ -101,6 +114,9 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len) {
     if (ptr == SDS_NOINIT)
         sh->buf[len] = '\0';
     else if (ptr) {
+        //核心：
+        //把外部传入的字符串内容，复制到 embstr 内部连续内存中的 buf 区域
+        //buf是FAM，代表“当前对象内存块中的一段空间”，这里不能直接赋值指针
         memcpy(sh->buf,ptr,len);
         sh->buf[len] = '\0';
     } else {
@@ -115,6 +131,11 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len) {
  *
  * The current limit of 44 is chosen so that the biggest string object
  * we allocate as EMBSTR will still fit into the 64 byte arena of jemalloc. */
+/**
+ * 为什么是44？
+ * 嵌入式字符串最大以64bytes存储
+ * 64-16(redisObject)-3(sdshdr8)-1(null terminator)
+ */
 #define OBJ_ENCODING_EMBSTR_SIZE_LIMIT 44
 robj *createStringObject(const char *ptr, size_t len) {
     if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT)
