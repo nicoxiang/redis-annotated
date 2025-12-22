@@ -423,6 +423,9 @@ _quicklistNodeSizeMeetsOptimizationRequirement(const size_t sz,
 
 #define sizeMeetsSafetyLimit(sz) ((sz) <= SIZE_SAFETY_LIMIT)
 
+/**
+ * 判断一个 quicklistNode 里的 ziplist 还能不能再塞新 entry
+ */
 REDIS_STATIC int _quicklistNodeAllowInsert(const quicklistNode *node,
                                            const int fill, const size_t sz) {
     if (unlikely(!node))
@@ -444,13 +447,26 @@ REDIS_STATIC int _quicklistNodeAllowInsert(const quicklistNode *node,
         ziplist_overhead += 5;
 
     /* new_sz overestimates if 'sz' encodes to an integer type */
+    //当前ziplist已占用的字节+新value的字节+ziplist entry的结构性开销
     unsigned int new_sz = node->sz + sz + ziplist_overhead;
+    /**
+     * fill >= 0 直接返回0
+     * 只有 fill < 0（size-based）时才生效
+     * list-max-ziplist-size -2 即 optimization level=1，此时如果<8k，就代表还在优化限制范围内，可以直接返回1
+     */
     if (likely(_quicklistNodeSizeMeetsOptimizationRequirement(new_sz, fill)))
         return 1;
     /* when we return 1 above we know that the limit is a size limit (which is
      * safe, see comments next to optimization_level and SIZE_SAFETY_LIMIT) */
+    /**
+     * 8KB safety limit 是“count-based 模式”的安全线
+     * 如果超过直接返回0
+     */
     else if (!sizeMeetsSafetyLimit(new_sz))
         return 0;
+    /**
+     * entry数量不能超限 
+     */    
     else if ((int)node->count < fill)
         return 1;
     else

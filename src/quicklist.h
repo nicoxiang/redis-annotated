@@ -41,16 +41,49 @@
  * recompress: 1 bit, bool, true if node is temporarry decompressed for usage.
  * attempted_compress: 1 bit, boolean, used for verifying during testing.
  * extra: 10 bits, free for future use; pads out the remainder of 32 bits */
+
+ /**
+  * 双向链表中的一个节点，每个节点内部装着一个 ziplist（或压缩后的 ziplist）
+  * 一个 cache line 可以放 2 个 quicklistNode
+  */
 typedef struct quicklistNode {
     struct quicklistNode *prev;
     struct quicklistNode *next;
+    /**
+     * 指向 ziplist 或压缩数据
+     */
     unsigned char *zl;
+    /**
+     * zl 占用的字节数
+     */
     unsigned int sz;             /* ziplist size in bytes */
+    /**
+     * ziplist 中 entry 数
+     */
     unsigned int count : 16;     /* count of items in ziplist */
+    /**
+     * encoding，决定物理存储形式（怎么存）
+     * 
+     * RAW 原始 ziplist
+     * LZF LZF 压缩后的 ziplist 数据
+     */
     unsigned int encoding : 2;   /* RAW==1 or LZF==2 */
+    /**
+     * 决定逻辑容器类型（里面是什么）
+     * 
+     */
     unsigned int container : 2;  /* NONE==1 or ZIPLIST==2 */
+    /**
+     * 该 node 原本是压缩的，但因为要访问，被临时解压了
+     */
     unsigned int recompress : 1; /* was this node previous compressed? */
+    /**
+     * ziplist很小，LZF 压缩效果差，已经尝试过压缩，避免每次访问都反复尝试压缩
+     */
     unsigned int attempted_compress : 1; /* node can't compress; too small */
+    /**
+     * padding，供后续扩展
+     */
     unsigned int extra : 10; /* more bits to steal for future usage */
 } quicklistNode;
 
@@ -70,12 +103,36 @@ typedef struct quicklistLZF {
  * 'compress' is: -1 if compression disabled, otherwise it's the number
  *                of quicklistNodes to leave uncompressed at ends of quicklist.
  * 'fill' is the user-requested (or default) fill factor. */
+
+ /**
+  * list使用的是quicklist
+  */
 typedef struct quicklist {
     quicklistNode *head;
     quicklistNode *tail;
+    /**
+     * 所有ziplists中所有entries的总数量
+     */
     unsigned long count;        /* total count of all entries in all ziplists */
+    /**
+     * quicklistNodes的数量
+     */
     unsigned long len;          /* number of quicklistNodes */
+    /**
+     * fill > 0：按“元素个数”限制
+     * fill < 0：按“字节大小”限制
+     * 默认-2，即8kb
+     * 见配置：list-max-ziplist-size
+     */
     int fill : 16;              /* fill factor for individual nodes */
+    /**
+     * 节点压缩深度
+     * compress = 0 不压缩任何节点，所有节点都是普通 ziplist
+     * compress = 1 头尾各 1 个节点不压缩，中间节点压缩
+     * compress = 2 头尾各 2 个节点不压缩，中间节点压缩
+     * 默认0
+     * 见配置：list-compress-depth
+     */
     unsigned int compress : 16; /* depth of end nodes not to compress;0=off */
 } quicklist;
 

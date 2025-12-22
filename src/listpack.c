@@ -47,6 +47,25 @@
 #define LP_MAX_INT_ENCODING_LEN 9
 #define LP_MAX_BACKLEN_SIZE 5
 #define LP_MAX_ENTRY_BACKLEN 34359738367ULL
+
+
+/**
+ * listpack encoding
+ * 
+ * int:
+ * 7bit小整数
+ * 0xxxxxxx 最高位 0，剩余 7 bit 是整数值
+ * 13bit整数
+ * 110xxxxx xxxxxxxx 前 3 bit：110，后 13 bit 是整数值
+ * 
+ * string:
+ * 短字符串（<= 63 字节）
+ * 10xxxxxx 10：字符串标识，剩余6bits 长度（0~63）
+ * 中等字符串（<= 4095 字节）
+ * 1110xxxx xxxxxxxx 1100：字符串标识，剩余12bits 长度（0~2^12-1）
+ */
+
+
 #define LP_ENCODING_INT 0
 #define LP_ENCODING_STRING 1
 
@@ -203,6 +222,23 @@ int lpStringToInt64(const char *s, unsigned long slen, int64_t *value) {
 
 /* Create a new, empty listpack.
  * On success the new listpack is returned, otherwise an error is returned. */
+/**
+ * HEADER
+ * 4Bytes存放整个listpack占用字节数
+ * 2Bytes存放entry数量
+ * 
+ * 尾部
+ * 1Byte存放尾部End Mark，255同ziplist
+ * 
+ * listpack整体内存布局
+ * +----------------+------------------+-------------------+-----+------------------+----------+
+ * | Total Bytes    | Num Elements     | Entry 1           | ... | Entry N         | End Mark |
+ * | (4 bytes)      | (2 bytes)        |                   |     |                 | (0xFF)   |
+ * +----------------+------------------+-------------------+-----+------------------+----------+
+ * 
+ * listpack entry
+ * [ encoding ][ content ][ backlen ]
+ */
 unsigned char *lpNew(void) {
     unsigned char *lp = lp_malloc(LP_HDR_SIZE+1);
     if (lp == NULL) return NULL;
@@ -293,6 +329,32 @@ int lpEncodeGetType(unsigned char *ele, uint32_t size, unsigned char *intenc, ui
  * The function returns the number of bytes used to encode it, from
  * 1 to 5. If 'buf' is NULL the function just returns the number of bytes
  * needed in order to encode the backlen. */
+
+ /**
+  * 把当前元素的encoding+content的总size，encode后存储到buffer buf上
+  * 返回backLen实际占用的字节数，从1-5
+  * 
+  * 以l=10000举例
+  * 二进制等于 10 0111 0001 0000
+  * 右移7位表示抛弃低7位，剩下的就是高7位 100 1110，把高7位（最高位bit为0）存入buf[0]
+  * l&127 0000000001111111 代表保留低7位
+  * 最后(l&127)|128
+  * 128=0000000010000000
+  * 结果就是在最高位bit放上1，最后整个byte存入buf[1]
+  * 
+  * 
+  * 整理含义就是把变长编码（7-bit groups + MSB）就是把一个大整数拆成 每 7 位一组
+  * 每组放入 1 字节 → MSB 当标志
+  * 在读取的时候从右往前，如果遇上MSB为1，则继续往前读取；如果遇上MSB为0，则表示读取结束
+  * 这里的MSB也称为continuation bit，控制读取是否结束
+  * 注意entry-len每个字节的低7位采用了大端模式存储，也就是说entry-len的低位字节保存在内存高地址上
+  * 
+  * MSB Most Significant Bit，一个byte中权重最高的bit
+  * LSB Least Significant Bit 与之相反
+  * 
+  * 大端模式 Big-Endian
+  * Endianness控制的是字节在内存中的存放顺序，如果是Big-Endian，则从左往右读取，高位在前面
+  */
 unsigned long lpEncodeBacklen(unsigned char *buf, uint64_t l) {
     if (l <= 127) {
         if (buf) buf[0] = l;
@@ -369,6 +431,11 @@ void lpEncodeString(unsigned char *buf, unsigned char *s, uint32_t len) {
 
 /* Return the encoded length of the listpack element pointed by 'p'. If the
  * element encoding is wrong then 0 is returned. */
+
+ /**
+  * 根据当前entry第一个byte，计算encoding占用的size（byte数）
+  * 如果是string，再加上实际数据总长度，实际数据总长度根据当前entry第一个byte算出
+  */
 uint32_t lpCurrentEncodedSize(unsigned char *p) {
     if (LP_ENCODING_IS_7BIT_UINT(p[0])) return 1;
     if (LP_ENCODING_IS_6BIT_STR(p[0])) return 1+LP_ENCODING_6BIT_STR_LEN(p);
@@ -387,6 +454,10 @@ uint32_t lpCurrentEncodedSize(unsigned char *p) {
  * function if the current element is the EOF element at the end of the
  * listpack, however, while this function is used to implement lpNext(),
  * it does not return NULL when the EOF element is encountered. */
+
+ /**
+  * 跳过当前entry，包括encoding+content+backLen
+  */
 unsigned char *lpSkip(unsigned char *p) {
     unsigned long entrylen = lpCurrentEncodedSize(p);
     entrylen += lpEncodeBacklen(NULL,entrylen);
@@ -757,13 +828,24 @@ uint32_t lpBytes(unsigned char *lp) {
  * the tail, negative indexes specify elements starting from the tail, where
  * -1 means the last element, -2 the penultimate and so forth. If the index
  * is out of range, NULL is returned. */
+/**
+ * listpack元素查找，返回指向元素的指针
+ * 如果index是正数，从头到尾遍历
+ * 如果index是负数，从尾到头遍历，-1表示最后一个元素，-2表示倒数第二个元素
+ * 越界返回NULL
+ * 
+ */
 unsigned char *lpSeek(unsigned char *lp, long index) {
+    //默认从左往右
     int forward = 1; /* Seek forward by default. */
 
     /* We want to seek from left to right or the other way around
      * depending on the listpack length and the element position.
      * However if the listpack length cannot be obtained in constant time,
      * we always seek from left to right. */
+    /**
+     * 4,5bit代表listpack的entry数量
+     */
     uint32_t numele = lpGetNumElements(lp);
     if (numele != LP_HDR_NUMELE_UNKNOWN) {
         if (index < 0) index = (long)numele+index;
@@ -771,6 +853,9 @@ unsigned char *lpSeek(unsigned char *lp, long index) {
         if (index >= numele) return NULL; /* Out of range the other side. */
         /* We want to scan right-to-left if the element we are looking for
          * is past the half of the listpack. */
+        /**
+         * 如果计算后index > 1/2，从后往前遍历
+         */
         if (index > numele/2) {
             forward = 0;
             /* Left to right scanning always expects a negative index. Convert
@@ -785,6 +870,11 @@ unsigned char *lpSeek(unsigned char *lp, long index) {
 
     /* Forward and backward scanning is trivially based on lpNext()/lpPrev(). */
     if (forward) {
+        /**
+         * 正向遍历
+         * 跳过listpack HEADER
+         * 一个个entry地跳过(encoding+content+backLen)
+         */
         unsigned char *ele = lpFirst(lp);
         while (index > 0 && ele) {
             ele = lpNext(lp,ele);
@@ -792,6 +882,11 @@ unsigned char *lpSeek(unsigned char *lp, long index) {
         }
         return ele;
     } else {
+        /**
+         * 反向遍历
+         * 指向最后一个元素
+         * 通过解析backLen，依次往前跳
+         */
         unsigned char *ele = lpLast(lp);
         while (index < -1 && ele) {
             ele = lpPrev(lp,ele);
