@@ -68,14 +68,36 @@ typedef void aeEventFinalizerProc(struct aeEventLoop *eventLoop, void *clientDat
 typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
 
 /* File event structure */
+
+/**
+ * event driven programming中的event
+ * IO事件
+ */
 typedef struct aeFileEvent {
+    /**
+     * 事件类型的掩码
+     */
     int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */
+    /**
+     * AE_READABLE事件的处理函数
+     */
     aeFileProc *rfileProc;
+    /**
+     * AE_WRITABLE事件的处理函数
+     */
     aeFileProc *wfileProc;
+    /**
+     * 指向客户端私有数据的指针
+     */
     void *clientData;
 } aeFileEvent;
 
 /* Time event structure */
+
+/**
+ * event driven programming中的event
+ * 时间事件
+ */
 typedef struct aeTimeEvent {
     long long id; /* time event identifier. */
     long when_sec; /* seconds */

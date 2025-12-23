@@ -136,6 +136,9 @@ void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
 
+/**
+ * event driven programming中的事件注册
+ */
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData)
 {
@@ -145,6 +148,10 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
     }
     aeFileEvent *fe = &eventLoop->events[fd];
 
+    /**
+     * 如果是epoll，则调用封装的epoll_ctl函数
+     * 注册希望监听的事件和相应的处理函数
+     */
     if (aeApiAddEvent(eventLoop, fd, mask) == -1)
         return AE_ERR;
     fe->mask |= mask;
@@ -358,17 +365,26 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
  * the events that's possible to process without to wait are processed.
  *
  * The function returns the number of events processed. */
+
+ /**
+  * 根据事件类型进行相应的处理
+  */
 int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
     int processed = 0, numevents;
 
     /* Nothing to do? return ASAP */
+    //若没有事件处理，则立刻返回
     if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
 
     /* Note that we want call select() even if there are no
      * file events to process as long as we want to process time
      * events, in order to sleep until the next time event is ready
      * to fire. */
+    
+     /**
+      * 如果有IO事件发生，或者紧急的时间事件发生，则开始处理
+      */
     if (eventLoop->maxfd != -1 ||
         ((flags & AE_TIME_EVENTS) && !(flags & AE_DONT_WAIT))) {
         int j;
@@ -411,6 +427,10 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
         /* Call the multiplexing API, will return only on timeout or when
          * some event fires. */
+        /**
+         * 捕获事件
+         * 如果是epoll，则调用封装的epoll_wait函数
+         */
         numevents = aeApiPoll(eventLoop, tvp);
 
         /* After sleep callback. */
@@ -468,9 +488,15 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         }
     }
     /* Check time events */
+    /**
+     * 检查是否有时间事件，若有，则调用processTimeEvents函数处理
+     */
     if (flags & AE_TIME_EVENTS)
         processed += processTimeEvents(eventLoop);
 
+    /**
+     * 返回已经处理的IO事件或时间事件数量
+     */
     return processed; /* return the number of processed file/time events */
 }
 
@@ -496,6 +522,9 @@ int aeWait(int fd, int mask, long long milliseconds) {
     }
 }
 
+/**
+ * event loop循环
+ */
 void aeMain(aeEventLoop *eventLoop) {
     eventLoop->stop = 0;
     while (!eventLoop->stop) {
