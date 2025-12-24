@@ -76,6 +76,11 @@ typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
 typedef struct aeFileEvent {
     /**
      * 事件类型的掩码
+     * 包括可读、可写、屏障
+     * 
+     * 屏障事件的主要作用是用来反转事件的处理顺序。比如在默认情况下，Redis会先给客户端返回结果，
+     * 但是如果面临需要把数据尽快写入磁盘的情况，Redis就会用到屏障事件，
+     * 把写数据和回复客户端的顺序做下调整，先把数据落盘，再给客户端回复
      */
     int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */
     /**
@@ -99,13 +104,37 @@ typedef struct aeFileEvent {
  * 时间事件
  */
 typedef struct aeTimeEvent {
+    /**
+     * 时间事件ID
+     */
     long long id; /* time event identifier. */
+    /**
+     * 事件到达的秒级时间戳
+     */
     long when_sec; /* seconds */
+    /**
+     * 事件到达的毫秒级时间戳
+     */
     long when_ms; /* milliseconds */
+    /**
+     * 时间事件触发后的处理函数
+     */
     aeTimeProc *timeProc;
+    /**
+     * 事件结束后的处理函数
+     */
     aeEventFinalizerProc *finalizerProc;
+    /**
+     * 事件相关的私有数据
+     */
     void *clientData;
+    /**
+     * 时间事件链表的前向指针
+     */
     struct aeTimeEvent *prev;
+    /**
+     * 时间事件链表的后向指针
+     */
     struct aeTimeEvent *next;
 } aeTimeEvent;
 

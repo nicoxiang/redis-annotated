@@ -451,6 +451,11 @@ typedef long long ustime_t; /* microsecond time type. */
 /* Using the following macro you can run code inside serverCron() with the
  * specified period, specified in milliseconds.
  * The actual resolution depends on server.hz. */
+/**
+ * 假设hz=10
+ * 如果_ms_ <= 100，说明任务间隔非常短，每次都执行
+ * 否则 _ms_/100，假设_ms_=500，则第 0、5、10、15… 次调用执行
+ */
 #define run_with_period(_ms_) if ((_ms_ <= 1000/server.hz) || !(server.cronloops%((_ms_)/(1000/server.hz))))
 
 /* We can print the stacktrace, so our assert is defined this way: */

@@ -83,6 +83,9 @@ void linkClient(client *c) {
     raxInsert(server.clients_index,(unsigned char*)&id,sizeof(id),c,NULL);
 }
 
+/**
+ * 创建client对象
+ */
 client *createClient(int fd) {
     client *c = zmalloc(sizeof(client));
 
@@ -95,6 +98,9 @@ client *createClient(int fd) {
         anetEnableTcpNoDelay(NULL,fd);
         if (server.tcpkeepalive)
             anetKeepAlive(NULL,fd,server.tcpkeepalive);
+        /**
+         * 调用aeCreateFileEvent，监听读事件，对应客户端读写请求，使用readQueryFromclient回调函数处理
+         */
         if (aeCreateFileEvent(server.el,fd,AE_READABLE,
             readQueryFromClient, c) == AE_ERR)
         {
@@ -661,6 +667,10 @@ int clientHasPendingReplies(client *c) {
 }
 
 #define MAX_ACCEPTS_PER_CALL 1000
+
+/**
+ * 在 Redis 接收到一个新的客户端 socket 后，创建对应的 client 对象，初始化其状态，并把它注册到事件循环中以便后续读写处理
+ */
 static void acceptCommonHandler(int fd, int flags, char *ip) {
     client *c;
     if ((c = createClient(fd)) == NULL) {
@@ -731,7 +741,12 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
     c->flags |= flags;
 }
 
+/**
+ * TCP 监听事件回调函数，当监听 socket 上有新连接到来时，它负责 accept 新客户端，并把新客户端注册到事件循环中
+ */
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
+    //MAX_ACCEPTS_PER_CALL 限制一次事件循环中，Redis 从监听 socket 接受新客户端连接的最大数量，
+    //防止新连接“淹没”事件循环，保证系统对已有客户端的响应不会被阻塞
     int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
     char cip[NET_IP_STR_LEN];
     UNUSED(el);
@@ -739,6 +754,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(privdata);
 
     while(max--) {
+        //封装的非阻塞 accept
         cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK)
@@ -1079,12 +1095,19 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
  * we can just write the replies to the client output buffer without any
  * need to use a syscall in order to install the writable event handler,
  * get it called, and so forth. */
+
+ /**
+  * 在每次进入event loop前调用
+  * 希望能 直接把响应写入客户端的输出缓冲区，而无需额外的系统调用（syscall）来注册可写事件，减少系统调用开销
+  */
 int handleClientsWithPendingWrites(void) {
     listIter li;
     listNode *ln;
     int processed = listLength(server.clients_pending_write);
 
+    //获取待写回的客户端列表
     listRewind(server.clients_pending_write,&li);
+    //遍历每一个待写回的客户端
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_WRITE;
@@ -1095,10 +1118,12 @@ int handleClientsWithPendingWrites(void) {
         if (c->flags & CLIENT_PROTECTED) continue;
 
         /* Try to write buffers to the client socket. */
+        //调用writeToClient将当前客户端的输出缓冲区数据写回
         if (writeToClient(c->fd,c,0) == C_ERR) continue;
 
         /* If after the synchronous writes above we still have data to
          * output to the client, we need to install the writable handler. */
+        //如果还有待写回数据
         if (clientHasPendingReplies(c)) {
             int ae_flags = AE_WRITABLE;
             /* For the fsync=always policy, we want that a given FD is never
@@ -1111,6 +1136,7 @@ int handleClientsWithPendingWrites(void) {
             {
                 ae_flags |= AE_BARRIER;
             }
+            //创建可写事件的监听，以及设置回调函数
             if (aeCreateFileEvent(server.el, c->fd, ae_flags,
                 sendReplyToClient, c) == AE_ERR)
             {

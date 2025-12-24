@@ -1113,6 +1113,24 @@ void updateCachedTime(int update_daylight_info) {
  * a macro is used: run_with_period(milliseconds) { .... }
  */
 
+ /**
+  * 这是我们的定时器中断，每秒调用 server.hz 次。
+  * 在这里我们处理许多需要异步完成的任务，例如：
+  * 
+  * - 主动收集过期键（在查找时也会以懒惰方式进行）。
+  * - 软件看门狗。
+  * - 更新一些统计信息。
+  * - 数据库哈希表的增量 rehash。
+  * - 触发 BGSAVE / AOF 重写，以及处理已终止的子进程。
+  * - 各种客户端超时处理。
+  * - 复制连接重建。
+  * - 以及其他更多任务……
+  *
+  * 直接在这里调用的所有操作都会每秒执行 server.hz 次，
+  * 因此为了限制一些希望较少执行的操作的频率，会使用宏：
+  * run_with_period(milliseconds) { .... }
+  * 
+  */
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     int j;
     UNUSED(eventLoop);
@@ -1230,9 +1248,15 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* We need to do a few operations on clients asynchronously. */
+    /**
+     * 执行客户端的异步操作
+     */
     clientsCron();
 
     /* Handle background operations on Redis databases. */
+    /**
+     * 执行数据库的后台操作
+     */
     databasesCron();
 
     /* Start a scheduled AOF rewrite if this was requested by the user while
@@ -1329,6 +1353,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * clear the AOF error in case of success to make the DB writable again,
      * however to try every second is enough in case of 'hz' is set to
      * an higher frequency. */
+    /**
+     * 每1秒执行1次，检查AOF是否有写错误
+     * 如果有的话，serverCron就会调用flushAppendOnlyFile函数，再次刷回AOF文件的缓存数据
+     */
     run_with_period(1000) {
         if (server.aof_last_write_status == C_ERR)
             flushAppendOnlyFile(0);
@@ -1382,6 +1410,11 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 /* This function gets called every time Redis is entering the
  * main loop of the event driven library, that is, before to sleep
  * for ready file descriptors. */
+
+ /**
+  * Redis 在每次事件循环阻塞等待 IO 事件（epoll_wait / select 等）前执行的钩子函数，
+  * 用于执行一些需要在事件处理前完成的操作，比如处理过期键、延迟释放 client、后台任务等
+  */
 void beforeSleep(struct aeEventLoop *eventLoop) {
     UNUSED(eventLoop);
 
@@ -2165,6 +2198,12 @@ void initServer(void) {
     /* Create the timer callback, this is our way to process many background
      * operations incrementally, like clients timeout, eviction of unaccessed
      * expired keys and so forth. */
+    /**
+     * 事件循环中注册一个定时触发的函数，这是我们增量处理许多后台操作的方式
+     * 比如客户端超时、未被访问的过期键的驱逐等等
+     * 
+     * 时间事件触发后的回调函数是serverCron
+     */
     if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
         serverPanic("Can't create event loop timers.");
         exit(1);
