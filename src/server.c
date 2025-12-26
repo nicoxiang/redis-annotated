@@ -3962,12 +3962,21 @@ void createPidFile(void) {
 void daemonize(void) {
     int fd;
 
+    /**
+     * 两种情况：
+     * - fork执行成功，父进程返回>0，父进程退出
+     * - 返回<0，fork失败
+     */
     if (fork() != 0) exit(0); /* parent exits */
+    //创建新会话、脱离控制终端、成为新进程组首进程
     setsid(); /* create a new session */
 
     /* Every output goes to /dev/null. If Redis is daemonized but
      * the 'logfile' is set to 'stdout' in the configuration file
      * it will not log at all. */
+    /**
+     * 将子进程的标准输入、标准输出、标准错误输出重定向到/dev/null中
+     */
     if ((fd = open("/dev/null", O_RDWR, 0)) != -1) {
         dup2(fd, STDIN_FILENO);
         dup2(fd, STDOUT_FILENO);
