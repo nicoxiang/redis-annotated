@@ -1126,7 +1126,13 @@ struct redisServer {
     int cfd_count;              /* Used slots in cfd[] */
     list *clients;              /* List of active clients */
     list *clients_to_close;     /* Clients to close asynchronously */
+    /**
+     * 待写回数据的clients
+     */
     list *clients_pending_write; /* There is to write or install handler. */
+    /**
+     * 待读取数据的clients
+     */
     list *clients_pending_read;  /* Client has pending read socket buffers. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
     client *current_client;     /* Current client executing the command. */
