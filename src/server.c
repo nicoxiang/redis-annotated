@@ -2274,6 +2274,9 @@ void InitServerLast() {
 
 /* Populates the Redis Command Table starting from the hard coded list
  * we have on top of redis.c file. */
+/**
+ * 将Redis提供的命令名称和对应的实现函数，插入到哈希表中
+ */
 void populateCommandTable(void) {
     int j;
     int numcommands = sizeof(redisCommandTable)/sizeof(struct redisCommand);
@@ -2641,13 +2644,23 @@ void call(client *c, int flags) {
  * If C_OK is returned the client is still alive and valid and
  * other operations can be performed by the caller. Otherwise
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
+
+ /**
+  * processCommand 在已经读取完整一条命令并填充好 client->argv/argc 时被调用。
+  * 负责执行命令或将命令入队
+  */
 int processCommand(client *c) {
+    //允许加载的 module 对即将执行的命令进行拦截或修改
     moduleCallCommandFilters(c);
 
     /* The QUIT command is handled separately. Normal command procs will
      * go through checking for replication and QUIT will cause trouble
      * when FORCE_REPLICATION is enabled and would be implemented in
      * a regular command proc. */
+    /**
+     * 如果命令名是 "quit"，向客户端发送 +OK，
+     * 返回 C_ERR（表示客户端被销毁/结束处理的信号，调用者会处理关闭）
+     */
     if (!strcasecmp(c->argv[0]->ptr,"quit")) {
         addReply(c,shared.ok);
         c->flags |= CLIENT_CLOSE_AFTER_REPLY;
@@ -2656,9 +2669,15 @@ int processCommand(client *c) {
 
     /* Now lookup the command and check ASAP about trivial error conditions
      * such as wrong arity, bad command name and so forth. */
+    /**
+     * 查找命令并做初步参数/拼写检查
+     */
     c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
+    //如果找不到命令
     if (!c->cmd) {
+        //如果客户端在 MULTI 事务中，标记为CLIENT_DIRTY_EXEC，后续EXEC将失败
         flagTransaction(c);
+        //构建unknown command返回
         sds args = sdsempty();
         int i;
         for (i=1; i < c->argc && sdslen(args) < 128; i++)
@@ -2667,6 +2686,8 @@ int processCommand(client *c) {
             (char*)c->argv[0]->ptr, args);
         sdsfree(args);
         return C_OK;
+    //如果找到命令但参数数量不对
+    //The number of arguments to a function is called it's arity
     } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
                (c->argc < -c->cmd->arity)) {
         flagTransaction(c);
@@ -2676,9 +2697,11 @@ int processCommand(client *c) {
     }
 
     /* Check if the user is authenticated */
+    //如果 server.requirepass 已设置且客户端未认证且命令不是 authCommand
     if (server.requirepass && !c->authenticated && c->cmd->proc != authCommand)
     {
         flagTransaction(c);
+        //返回 NOAUTH Authentication required.
         addReply(c,shared.noautherr);
         return C_OK;
     }
@@ -2687,6 +2710,9 @@ int processCommand(client *c) {
      * However we don't perform the redirection if:
      * 1) The sender of this command is our master.
      * 2) The command has no key arguments. */
+    /**
+     * 集群模式下的重定向检查
+     */
     if (server.cluster_enabled &&
         !(c->flags & CLIENT_MASTER) &&
         !(c->flags & CLIENT_LUA &&
@@ -2696,14 +2722,18 @@ int processCommand(client *c) {
     {
         int hashslot;
         int error_code;
+        //计算 hashslot 并获取对应的 cluster node
         clusterNode *n = getNodeByQuery(c,c->cmd,c->argv,c->argc,
                                         &hashslot,&error_code);
+        //如果目标节点不是本节点                                        
         if (n == NULL || n != server.cluster->myself) {
+            //如果正在执行EXEC，彻底放弃当前客户端正在进行的事务，并把客户端状态恢复到“非事务模式”
             if (c->cmd->proc == execCommand) {
                 discardTransaction(c);
             } else {
                 flagTransaction(c);
             }
+            //给客户端返回 MOVED/ASK/.. 重定向
             clusterRedirectClient(c,n,hashslot,error_code);
             return C_OK;
         }
@@ -2715,6 +2745,11 @@ int processCommand(client *c) {
      * the event loop since there is a busy Lua script running in timeout
      * condition, to avoid mixing the propagation of scripts with the
      * propagation of DELs due to eviction. */
+
+     /**
+      * TODO:以下进一步阅读processCommand支线
+      * OOM / 内存回收检查
+      */
     if (server.maxmemory && !server.lua_timedout) {
         int out_of_memory = freeMemoryIfNeededAndSafe() == C_ERR;
         /* freeMemoryIfNeeded may flush slave output buffers. This may result
@@ -2829,15 +2864,24 @@ int processCommand(client *c) {
     }
 
     /* Exec the command */
+    /**
+     * 真正执行命令
+     * 如果客户端处于 CLIENT_MULTI（在事务块中），且当前命令不是 exec/discard/multi/watch 等事务控制命令
+     */
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
     {
+        //把当前命令入事务队列
         queueMultiCommand(c);
+        //给客户端返回 "+QUEUED"
         addReply(c,shared.queued);
     } else {
+        //调用call执行命令
         call(c,CMD_CALL_FULL);
+        //记录主偏移量用于复制
         c->woff = server.master_repl_offset;
+        //处理被Block类型命令阻塞的client
         if (listLength(server.ready_keys))
             handleClientsBlockedOnKeys();
     }

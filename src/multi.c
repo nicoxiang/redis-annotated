@@ -71,6 +71,9 @@ void queueMultiCommand(client *c) {
     c->mstate.cmd_flags |= c->cmd->flags;
 }
 
+/**
+ * 彻底放弃当前客户端正在进行的事务，并把客户端状态恢复到“非事务模式”
+ */
 void discardTransaction(client *c) {
     freeClientMultiState(c);
     initClientMultiState(c);

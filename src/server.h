@@ -271,7 +271,18 @@ typedef long long ustime_t; /* microsecond time type. */
 #define BLOCKED_NUM 6     /* Number of blocked states. */
 
 /* Client request types */
+
+/* 客户端请求格式类型 */
+
+/**
+ * telnet/nc 手工调试
+ * 命令和命令之间是使用换行符“\r\n”分隔开来的
+ */
 #define PROTO_REQ_INLINE 1
+/**
+ * RESP Array
+ * 以*开头
+ */
 #define PROTO_REQ_MULTIBULK 2
 
 /* Client classes for client limits, currently used only for
@@ -768,7 +779,13 @@ typedef struct client {
     int fd;                 /* Client socket. */
     redisDb *db;            /* Pointer to currently SELECTed DB. */
     robj *name;             /* As set by CLIENT SETNAME. */
+    /**
+     * 保存客户端已接收但尚未完整解析的请求数据的输入缓冲区。
+     */
     sds querybuf;           /* Buffer we use to accumulate client queries. */
+    /**
+     * 当前已经解析到 querybuf 的哪个位置
+     */
     size_t qb_pos;          /* The position we have read in querybuf. */
     sds pending_querybuf;   /* If this client is flagged as master, this buffer
                                represents the yet not applied portion of the

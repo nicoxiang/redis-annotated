@@ -302,15 +302,26 @@ void _addReplyStringToList(client *c, const char *s, size_t len) {
 
 /* Add the object 'obj' string representation to the client output buffer. */
 void addReply(client *c, robj *obj) {
+    /**
+     * 准备写入
+     * 判断当前客户端是否允许接收/缓存回复，并尽可能安排将来把输出写回套接字（例如设置写事件或把客户端列入 pending-write 列表）
+     */
     if (prepareClientToWrite(c) != C_OK) return;
 
+    //如果 obj encoding 是 OBJ_ENCODING_RAW 或 OBJ_ENCODING_EMBSTR
     if (sdsEncodedObject(obj)) {
+        //尝试写入静态缓冲区
         if (_addReplyToBuffer(c,obj->ptr,sdslen(obj->ptr)) != C_OK)
+            //如果写入静态缓冲区失败，失败后退到追加链表分块
             _addReplyStringToList(c,obj->ptr,sdslen(obj->ptr));
+    //如果 obj encoding 是 OBJ_ENCODING_INT
     } else if (obj->encoding == OBJ_ENCODING_INT) {
         /* For integer encoded strings we just convert it into a string
          * using our optimized function, and attach the resulting string
          * to the output buffer. */
+        /**
+         * 把整数转成字符串，得到长度 len
+         */
         char buf[32];
         size_t len = ll2string(buf,sizeof(buf),(long)obj->ptr);
         if (_addReplyToBuffer(c,buf,len) != C_OK)
@@ -1451,6 +1462,14 @@ int processMultibulkBuffer(client *c) {
  * more query buffer to process, because we read more data from the socket
  * or because a client was blocked and later reactivated, so there could be
  * pending query buffer, already representing a full command, to process. */
+
+ /**
+  * 只要 query buffer 中还有数据要处理，就会调用这个方法
+  * 两种触发原因：
+  * 1.刚从 socket 读到了新数据
+  * 2.client 之前被阻塞（比如因为BLPOP）但现在被恢复了
+  * 因此 query buffer 中可能已经凑够完整的 command 了，可以处理了
+  */
 void processInputBuffer(client *c) {
     server.current_client = c;
 
@@ -1476,6 +1495,9 @@ void processInputBuffer(client *c) {
         if (c->flags & (CLIENT_CLOSE_AFTER_REPLY|CLIENT_CLOSE_ASAP)) break;
 
         /* Determine request type when unknown. */
+        /**
+         * 如果reqType尚未确定，根据 query buffer 当前首字符确定
+         */
         if (!c->reqtype) {
             if (c->querybuf[c->qb_pos] == '*') {
                 c->reqtype = PROTO_REQ_MULTIBULK;
@@ -1484,6 +1506,16 @@ void processInputBuffer(client *c) {
             }
         }
 
+        /**
+         * 根据reqType再调用底层processInlineBuffer/processMultibulkBuffer
+         * 解析函数负责：
+         *  - 尝试解析完整命令，填充 c->argv / c->argc；
+         *  - 推进 c->qb_pos（消费掉已解析的数据）或在协议不完整时不推进并返回 C_ERR；
+         *  - 在协议错误时把错误写入输出缓冲并调用 setProtocolError 标记关闭（CLIENT_CLOSE_AFTER_REPLY），并返回 C_ERR。
+         * 
+         * 如果解析函数返回 C_ERR：表示尚未得到完整命令或发生协议错误，主循环 break（等待更多数据或关闭）
+         * 如果返回 C_OK：已成功解析出完整命令，继续执行下一步。
+         */
         if (c->reqtype == PROTO_REQ_INLINE) {
             if (processInlineBuffer(c) != C_OK) break;
         } else if (c->reqtype == PROTO_REQ_MULTIBULK) {
@@ -1497,6 +1529,9 @@ void processInputBuffer(client *c) {
             resetClient(c);
         } else {
             /* Only reset the client when the command was executed. */
+            /**
+             * 调用 processCommand(c) 执行命令
+             */
             if (processCommand(c) == C_OK) {
                 if (c->flags & CLIENT_MASTER && !(c->flags & CLIENT_MULTI)) {
                     /* Update the applied replication offset of our master. */
@@ -1530,6 +1565,11 @@ void processInputBuffer(client *c) {
  * the replication forwarding to the sub-slaves, in case the client 'c'
  * is flagged as master. Usually you want to call this instead of the
  * raw processInputBuffer(). */
+
+ /**
+  * processInputBuffer 的 wrapper 方法
+  * 如果节点是CLIENT_MASTER，除了调用processInputBuffer函数，解析客户端命令以外，还会将主节点接收到的命令同步给从节点
+  */
 void processInputBufferAndReplicate(client *c) {
     if (!(c->flags & CLIENT_MASTER)) {
         processInputBuffer(c);
@@ -1545,6 +1585,14 @@ void processInputBufferAndReplicate(client *c) {
     }
 }
 
+/**
+ * 命令处理的4个阶段：
+ * 
+ * - 命令读取，对应readQueryFromClient函数；
+ * - 命令解析，对应processInputBufferAndReplicate函数；
+ * - 命令执行，对应processCommand函数；
+ * - 结果返回，对应addReply函数；
+ */
 void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     client *c = (client*) privdata;
     int nread, readlen;
@@ -1552,6 +1600,7 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     UNUSED(el);
     UNUSED(mask);
 
+    //从客户端socket中读取的数据长度，默认为16KB
     readlen = PROTO_IOBUF_LEN;
     /* If this is a multi bulk request, and we are processing a bulk reply
      * that is large enough, try to maximize the probability that the query
@@ -1571,7 +1620,14 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
 
     qblen = sdslen(c->querybuf);
     if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
+    //给缓冲区分配空间
     c->querybuf = sdsMakeRoomFor(c->querybuf, readlen);
+    /**
+     * 调用read从描述符为fd的客户端socket中读取数据，注意是追加到 querybuf 尾部
+     * 
+     * read方法：
+     * read() 从文件描述符 fd 对应的内核对象中，拷贝最多 nbytes 字节数据到用户态缓冲区 buf，并返回实际读取的字节数。
+     */
     nread = read(fd, c->querybuf+qblen, readlen);
     if (nread == -1) {
         if (errno == EAGAIN) {
