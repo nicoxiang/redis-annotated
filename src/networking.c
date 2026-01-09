@@ -1946,6 +1946,10 @@ int processCommandAndResetClient(client *c) {
 /* This function will execute any fully parsed commands pending on
  * the client. Returns C_ERR if the client is no longer valid after executing
  * the command, and C_OK for all other cases. */
+
+/**
+ * 执行所有处于 CLIENT_PENDING_COMMAND 状态的 client 的命令，然后把这些 client 重置为“可继续解析下一条命令”的状态。
+ */
 int processPendingCommandsAndResetClient(client *c) {
     if (c->flags & CLIENT_PENDING_COMMAND) {
         c->flags &= ~CLIENT_PENDING_COMMAND;
@@ -1964,6 +1968,12 @@ void processInputBuffer(client *c) {
     /* Keep processing while there is something in the input buffer */
     while(c->qb_pos < sdslen(c->querybuf)) {
         /* Return if clients are paused. */
+        /**
+         * 如果client paused，直接跳出
+         * 
+         * !(c->flags & CLIENT_PENDING_READ)语义：
+         * 允许“已经进入 I/O 流程的 client 继续完成读操作”，但禁止“新的 client 开始命令处理”
+         */
         if (!(c->flags & CLIENT_SLAVE) && 
             !(c->flags & CLIENT_PENDING_READ) && 
             clientsArePaused()) break;
@@ -1973,6 +1983,10 @@ void processInputBuffer(client *c) {
 
         /* Don't process more buffers from clients that have already pending
          * commands to execute in c->argv. */
+        /**
+         * 如果这个 client 已经有“解析完成、但尚未执行”的命令，就立刻停止继续解析新的输入
+         * 保证“一个 client 同一时刻最多只悬挂一条待执行命令”
+         */
         if (c->flags & CLIENT_PENDING_COMMAND) break;
 
         /* Don't process input from the master while there is a busy script
@@ -1989,6 +2003,9 @@ void processInputBuffer(client *c) {
         if (c->flags & (CLIENT_CLOSE_AFTER_REPLY|CLIENT_CLOSE_ASAP)) break;
 
         /* Determine request type when unknown. */
+        /**
+         * 如果reqType尚未确定，根据 query buffer 当前首字符确定
+         */
         if (!c->reqtype) {
             if (c->querybuf[c->qb_pos] == '*') {
                 c->reqtype = PROTO_REQ_MULTIBULK;
@@ -1997,6 +2014,16 @@ void processInputBuffer(client *c) {
             }
         }
 
+        /**
+         * 根据reqType再调用底层processInlineBuffer/processMultibulkBuffer
+         * 解析函数负责：
+         *  - 尝试解析完整命令，填充 c->argv / c->argc；
+         *  - 推进 c->qb_pos（消费掉已解析的数据）或在协议不完整时不推进并返回 C_ERR；
+         *  - 在协议错误时把错误写入输出缓冲并调用 setProtocolError 标记关闭（CLIENT_CLOSE_AFTER_REPLY），并返回 C_ERR。
+         * 
+         * 如果解析函数返回 C_ERR：表示尚未得到完整命令或发生协议错误，主循环 break（等待更多数据或关闭）
+         * 如果返回 C_OK：已成功解析出完整命令，继续执行下一步。
+         */
         if (c->reqtype == PROTO_REQ_INLINE) {
             if (processInlineBuffer(c) != C_OK) break;
             /* If the Gopher mode and we got zero or one argument, process
@@ -2024,6 +2051,11 @@ void processInputBuffer(client *c) {
             /* If we are in the context of an I/O thread, we can't really
              * execute the command here. All we can do is to flag the client
              * as one that needs to process the command. */
+
+            /**
+             * 如果客户端有CLIENT_PENDING_READ标识，将其改为CLIENT_PENDING_COMMAND，就退出循环，
+             * 并不调用processCommandAndResetClient函数执行命令
+             */
             if (c->flags & CLIENT_PENDING_READ) {
                 c->flags |= CLIENT_PENDING_COMMAND;
                 break;
@@ -3522,7 +3554,7 @@ int handleClientsWithPendingReadsUsingThreads(void) {
          * later when clients are unpaused and we re-queue all clients. */
         if (clientsArePaused()) continue;
 
-        //如果已经有完整命令在 querybuf 里，延后到这里统一处理
+        //如果client已经有Pending Commands，延后到这里统一处理
         if (processPendingCommandsAndResetClient(c) == C_ERR) {
             /* If the client is no longer valid, we avoid
              * processing the client later. So we just go

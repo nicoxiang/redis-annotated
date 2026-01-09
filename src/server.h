@@ -251,9 +251,15 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
 #define CLIENT_LUA_DEBUG_SYNC (1<<26)  /* EVAL debugging without fork() */
 #define CLIENT_MODULE (1<<27) /* Non connected client used by some module. */
 #define CLIENT_PROTECTED (1<<28) /* Client should not be freed for now. */
+/**
+ * 6.0新增，表示这个 client 的 socket 已经可读，但“读操作被推迟”，需要稍后再读
+ */
 #define CLIENT_PENDING_READ (1<<29) /* The client has pending reads and was put
                                        in the list of clients we can read
                                        from. */
+/**
+ * 6.0新增，表示这个 client 已经读完并解析出完整命令，但“命令执行被推迟”，需要稍后执行
+ */                                       
 #define CLIENT_PENDING_COMMAND (1<<30) /* Used in threaded I/O to signal after
                                           we return single threaded that the
                                           client has already pending commands
