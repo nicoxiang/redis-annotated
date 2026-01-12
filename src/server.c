@@ -1178,6 +1178,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      *
      * Note that you can change the resolution altering the
      * LRU_CLOCK_RESOLUTION define. */
+    
+     /**
+      * 默认情况下，每100毫秒调用getLRUClock函数更新一次全局LRU时钟值
+      */
     unsigned long lruclock = getLRUClock();
     atomicSet(server.lruclock,lruclock);
 
@@ -2747,8 +2751,8 @@ int processCommand(client *c) {
      * propagation of DELs due to eviction. */
 
      /**
-      * TODO:以下进一步阅读processCommand支线
       * OOM / 内存回收检查
+      * 如果设置了maxmemory配置项为非0值，且Lua脚本没有在超时运行
       */
     if (server.maxmemory && !server.lua_timedout) {
         int out_of_memory = freeMemoryIfNeededAndSafe() == C_ERR;
@@ -2775,6 +2779,10 @@ int processCommand(client *c) {
         }
     }
 
+
+    /**
+     * TODO:以下进一步阅读processCommand支线
+     */
     /* Don't accept write commands if there are problems persisting on disk
      * and if this is a master instance. */
     int deny_write_type = writeCommandsDeniedByDiskError();

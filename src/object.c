@@ -49,9 +49,11 @@ robj *createObject(int type, void *ptr) {
 
     /* Set the LRU to the current lruclock (minutes resolution), or
      * alternatively the LFU counter. */
+    //如果缓存替换策略为LFU，将lru变量设置为LFU的计数值
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
         o->lru = (LFUGetTimeInMinutes()<<8) | LFU_INIT_VAL;
     } else {
+        //否则，调用LRU_CLOCK函数获取LRU时钟值
         o->lru = LRU_CLOCK();
     }
     return o;
