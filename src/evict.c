@@ -240,7 +240,8 @@ void evictionPoolPopulate(int dbid, dict *sampledict, dict *keydict, struct evic
              * frequency of 255. */
 
             /**
-             * 若策略包含 LFU 标志，取 0..255 的频率计数的逆，即越不常访问得分越大，越先被驱逐
+             * 若策略包含 LFU 标志，取 255-LFUDecr，即越不常访问得分越大，越先被驱逐
+             * 注意，这里会调用LFUDecrAndReturn函数，衰减一次键值对的访问次数，以便能更加准确地反映实际选择待淘汰数据时，数据的访问频率
              */
             idle = 255-LFUDecrAndReturn(o);
         } else if (server.maxmemory_policy == MAXMEMORY_VOLATILE_TTL) {
@@ -389,12 +390,33 @@ unsigned long LFUTimeElapsed(unsigned long ldt) {
 
 /* Logarithmically increment a counter. The greater is the current counter value
  * the less likely is that it gets really implemented. Saturate it at 255. */
+
+ /**
+  * 以对数方式递增计数器。当前计数器的值越大，它真正被增加的可能性就越小。上限值255
+  * 因为键值对的访问次数只能用lru变量中有限的8 bits来记录，最大值就是255。
+  * 这样一来，如果每访问一次键值对，访问次数就加1的话，那么访问次数很容易就达到最大值了，这就无法区分不同的访问频率了。
+  * 所以这里采用了按概率增加访问次数的方法，也就是说，已有访问次数越大的键值对，它的访问次数就越难再增加。
+  */
 uint8_t LFULogIncr(uint8_t counter) {
+    //访问次数已经等于255，直接返回255
     if (counter == 255) return 255;
+    //计算一个随机数
     double r = (double)rand()/RAND_MAX;
+    /**
+     * 计算当前访问次数和初始值的差值
+     * LFU_INIT_VAL初始值是5，是为了一个key在创建后，不会立即被淘汰
+     */
     double baseval = counter - LFU_INIT_VAL;
+    //差值小于0，则将其设为0
     if (baseval < 0) baseval = 0;
+    /**
+     * 根据baseval和lfu_log_factor计算阈值p
+     * 阈值p的大小就决定了访问次数增加的难度。
+     * 阈值p越小，概率值r小于p的可能性也越小，此时，访问次数也越难增加；相反，如果阈值p越大，概率值r小于p的可能性就越大，访问次数就越容易增加。
+     * server.lfu_log_factor由redis.conf文件中定义的配置项lfu-log-factor决定，默认值为10
+     */
     double p = 1.0/(baseval*server.lfu_log_factor+1);
+    //随机数小于阈值p时，增加counter
     if (r < p) counter++;
     return counter;
 }
@@ -410,10 +432,18 @@ uint8_t LFULogIncr(uint8_t counter) {
  * to fit: as we check for the candidate, we incrementally decrement the
  * counter of the scanned objects if needed. */
 unsigned long LFUDecrAndReturn(robj *o) {
+    //获取当前键值对的上一次访问时间
     unsigned long ldt = o->lru >> 8;
+    //获取当前的访问次数
     unsigned long counter = o->lru & 255;
+    /**
+     * 计算衰减大小
+     * 调用LFUTimeElapsed函数，计算距离键值对的上一次访问已经过去的时长，这个时长也是以1分钟为精度来计算的。
+     * server.lfu_decay_time 由redis.conf文件中的配置项lfu-decay-time来决定，默认为1，所以在默认情况下，访问次数的衰减大小就是等于上一次访问距离当前的分钟数。
+     */
     unsigned long num_periods = server.lfu_decay_time ? LFUTimeElapsed(ldt) / server.lfu_decay_time : 0;
     if (num_periods)
+        //如果衰减大小小于当前访问次数，那么，衰减后的访问次数是当前访问次数减去衰减大小；否则，衰减后的访问次数等于0
         counter = (num_periods > counter) ? 0 : counter - num_periods;
     return counter;
 }

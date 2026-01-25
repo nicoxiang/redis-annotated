@@ -43,6 +43,15 @@ int keyIsExpired(redisDb *db, robj *key);
 /* Update LFU when an object is accessed.
  * Firstly, decrement the counter if the decrement time is reached.
  * Then logarithmically increment the counter, and update the access time. */
+
+ /**
+  * 对象被访问时更新LFU
+  * 首先衰减次数，再增长次数并更新访问时间
+  * 为什么要先衰减访问次数呢？
+  * 键值对的先前访问距离当前时间越长，那么这个键值对的访问频率相应地也就会降低
+  * 举个例子，假设数据A在时刻T到T+10分钟这段时间内，被访问了30次，那么，这段时间内数据A的访问频率可以计算为3次/分钟（30次/10分钟 = 3次/分钟）。
+  * 紧接着，在T+10分钟到T+20分钟这段时间内，数据A没有再被访问，那么此时，如果我们计算数据A在T到T+20分钟这段时间内的访问频率，它的访问频率就会降为1.5次/分钟（30次/20分钟 = 1.5次/分钟）
+  */
 void updateLFU(robj *val) {
     unsigned long counter = LFUDecrAndReturn(val);
     counter = LFULogIncr(counter);

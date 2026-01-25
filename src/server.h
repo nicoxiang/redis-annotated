@@ -657,7 +657,7 @@ typedef struct redisObject {
     /**
      * maxmemory-policy是LRU时，表示相对于全局LRU时钟的间隔时间（idle）
      * maxmemory-policy是LFU时，
-     * 高 16 位：上一次衰减时间（last decay time）
+     * 高 16 位：上一次衰减时间（last decay time），以1分钟为精度
      * 低 8 位：实际访问频率计数器（0~255）
      */
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
