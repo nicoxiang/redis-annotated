@@ -1309,6 +1309,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     } else {
         /* If there is not a background saving/rewrite in progress check if
          * we have to save/rewrite now. */
+         /**
+          * 根据配置文件中多个 save <seconds> <changes> 条目组成的条件数组来判断是否触发自动BGSAVE
+          */
         for (j = 0; j < server.saveparamslen; j++) {
             struct saveparam *sp = server.saveparams+j;
 
@@ -1396,6 +1399,12 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
      * Note: this code must be after the replicationCron() call above so
      * make sure when refactoring this file to keep this order. This is useful
      * because we want to give priority to RDB savings for replication. */
+
+     /**
+      * 如果之前因为正在进行 AOF rewrite（重写 AOF，也会 fork 子进程）而被推迟，
+      * 那么在合适的时机就应启动这个计划的 BGSAVE。
+      * 也就是说，BGSAVE 有时会被延后以避免与 AOF 重写同时进行（同时有多个写磁盘/子进程会增加 COW 开销或资源冲突）
+      */
     if (server.rdb_child_pid == -1 && server.aof_child_pid == -1 &&
         server.rdb_bgsave_scheduled &&
         (server.unixtime-server.lastbgsave_try > CONFIG_BGSAVE_RETRY_DELAY ||

@@ -90,14 +90,26 @@ typedef struct _rio rio;
  * actual implementation of read / write / tell, and will update the checksum
  * if needed. */
 
+ /**
+  * rioWrite 是一个通用的“写入”封装，
+  * 用来把用户缓冲区 buf 的 len 字节写入由 rio *r 指定的后端（可能是文件、内存 buffer、fd 集合等）。
+  * 它按可配置的最大块大小分块写入、在写入前可更新校验和，并维护已处理字节计数
+  */
 static inline size_t rioWrite(rio *r, const void *buf, size_t len) {
+    //使用循环直到所有字节写完（即 len 变为 0）。每次循环写入一块数据（可能是完整剩余数据，也可能是受限于最大块大小的子块）
     while (len) {
+        //计算本次写入的块大小
         size_t bytes_to_write = (r->max_processing_chunk && r->max_processing_chunk < len) ? r->max_processing_chunk : len;
+        //如果后端提供了 update_cksum 回调，则在写入前用当前块的数据去更新校验和（cksum）
         if (r->update_cksum) r->update_cksum(r,buf,bytes_to_write);
+        //调用后端的 write 函数把 bytes_to_write 字节写出
         if (r->write(r,buf,bytes_to_write) == 0)
             return 0;
+        //将 buf 指针向前移动 bytes_to_write 字节，为下一次写入剩余数据做准备         
         buf = (char*)buf + bytes_to_write;
+        //剩余待写入字节数减少 bytes_to_write
         len -= bytes_to_write;
+        //更新 rio 结构中的已处理字节计数 processed_bytes，表示到目前为止已成功读/写的总字节数
         r->processed_bytes += bytes_to_write;
     }
     return 1;

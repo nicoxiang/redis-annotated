@@ -752,6 +752,7 @@ void syncCommand(client *c) {
              * diskless replication) and we don't have a BGSAVE in progress,
              * let's start one. */
             if (server.aof_child_pid == -1) {
+                //Redis server执行主从复制命令时BGSAVE
                 startBgsaveForReplication(c->slave_capa);
             } else {
                 serverLog(LL_NOTICE,
@@ -2778,6 +2779,9 @@ void replicationCron(void) {
             /* Start the BGSAVE. The called function may start a
              * BGSAVE with socket target or disk target depending on the
              * configuration and slaves capabilities. */
+            /**
+             * 周期性检测主从复制状态时触发RDB生成
+             */
             startBgsaveForReplication(mincapa);
         }
     }
