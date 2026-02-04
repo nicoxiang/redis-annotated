@@ -373,6 +373,11 @@ void incrRefCount(robj *o) {
     if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount++;
 }
 
+/**
+ * 如果待释放对象的引用计数为1，则按对应类型释放内存
+ * 比如 freeStringObject 释放 o->ptr 指向的数据；zfree释放 robj 结构体本身
+ * 否则引用-1
+ */
 void decrRefCount(robj *o) {
     if (o->refcount == 1) {
         switch(o->type) {

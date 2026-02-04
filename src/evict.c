@@ -596,6 +596,7 @@ int freeMemoryIfNeeded(void) {
         goto cant_free; /* We need to free memory, but policy forbids. */
 
     latencyStartMonitor(latency);
+    //执行循环流程，删除淘汰数据
     while (mem_freed < mem_tofree) {
         int j, k, i, keys_freed = 0;
         static unsigned int next_db = 0;
@@ -702,9 +703,16 @@ int freeMemoryIfNeeded(void) {
              *
              * AOF and Output buffer memory will be freed eventually so
              * we only care about memory used by the key space. */
+            //获取当前内存使用量
             delta = (long long) zmalloc_used_memory();
             latencyStartMonitor(eviction_latency);
-            //如果配置了惰性删除，则进行异步删除；否则同步删除
+            /**
+             * 如果配置了惰性删除，则进行异步删除；否则同步删除
+             * 删除分两步：
+             * 1.将被淘汰的键值对从哈希表中去除，这里的哈希表既可能是设置了过期key的哈希表，也可能是全局哈希表
+             * 2.释放被淘汰键值对所占用的内存空间
+             * 两步一起做，就是同步删除；只做第一步，第二步由后台线程来执行，就是异步删除
+             */
             if (server.lazyfree_lazy_eviction)
                 dbAsyncDelete(db,keyobj);
             else
@@ -733,9 +741,20 @@ int freeMemoryIfNeeded(void) {
              * memory, since the "mem_freed" amount is computed only
              * across the dbAsyncDelete() call, while the thread can
              * release the memory all the time. */
+
+             /**
+              * 通常情况下，停止条件是已经释放了预先计算好的、固定数量的内存
+              * 但是，当我们是在另一个线程中删除对象时，最好时不时检查一下，现在是不是已经达到目标内存了
+              * "mem_freed" 值此时不可靠，因为线程在不断地释放内存，
+              * 应该主动检测当前的内存使用量，是否已经满足最大内存容量要求
+              * 
+              * 如果使用了惰性删除，并且每删除16个key后，统计下当前内存使用量
+              */
             if (server.lazyfree_lazy_eviction && !(keys_freed % 16)) {
+                //计算当前内存使用量是否不超过最大内存容量
                 if (getMaxmemoryState(NULL,NULL,NULL,NULL) == C_OK) {
                     /* Let's satisfy our stop condition. */
+                    //如果满足最大容量要求，让已释放内存量等于待释放量，以便结束循环
                     mem_freed = mem_tofree;
                 }
             }

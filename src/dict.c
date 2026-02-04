@@ -414,6 +414,11 @@ dictEntry *dictAddOrFind(dict *d, void *key) {
 /* Search and remove an element. This is an helper function for
  * dictDelete() and dictUnlink(), please check the top comment
  * of those functions. */
+/**
+ * 查找并移除元素
+ * dictDelete() 和 dictUnlink() 的helper方法
+ * @param nofree 不释放内存
+ */
 static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     uint64_t h, idx;
     dictEntry *he, *prevHe;
@@ -422,21 +427,29 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     if (d->ht[0].used == 0 && d->ht[1].used == 0) return NULL;
 
     if (dictIsRehashing(d)) _dictRehashStep(d);
+    //计算key的哈希值
     h = dictHashKey(d, key);
 
     for (table = 0; table <= 1; table++) {
+        //根据key的哈希值获取它所在的哈希桶编号
         idx = h & d->ht[table].sizemask;
+        //获取key所在哈希桶的第一个哈希项
         he = d->ht[table].table[idx];
         prevHe = NULL;
         while(he) {
+            //在哈希桶中逐一查找被删除的key是否存在
             if (key==he->key || dictCompareKeys(d, key, he->key)) {
                 /* Unlink the element from the list */
+                //如果找见被删除key了，那么将它从哈希桶的链表中去除
                 if (prevHe)
                     prevHe->next = he->next;
                 else
                     d->ht[table].table[idx] = he->next;
+                //如果要同步删除，那么就释放key和value的内存空间    
                 if (!nofree) {
+                    //key是sds，使用dictSdsDestructor，里面主要是调用sdsfree函数
                     dictFreeKey(d, he);
+                    //value是object，使用dictObjectDestructor，里面主要是调用decrRefCount函数
                     dictFreeVal(d, he);
                     zfree(he);
                 }
@@ -444,6 +457,7 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
                 return he;
             }
             prevHe = he;
+            //当前key不是要查找的key，再找下一个
             he = he->next;
         }
         if (!dictIsRehashing(d)) break;

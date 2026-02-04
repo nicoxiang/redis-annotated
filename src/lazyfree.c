@@ -28,6 +28,15 @@ size_t lazyfreeGetPendingObjectsCount(void) {
  *
  * For lists the function returns the number of elements in the quicklist
  * representing the list. */
+
+ /**
+  * 返回释放一个对象所需的“工作量”。
+  * 返回值并不一定等于该对象实际包含的内存分配次数，而是一个估算值。
+  * 对于字符串类型，该函数始终返回 1。
+  * 对于由哈希表或其他聚合数据结构表示的对象，该函数返回对象中包含的元素数量。
+  * 对于一个对象在内存上是“一次 malloc 分配出来的”，那么 Redis 会把它当成“只有 1 个释放单元”，即使在逻辑上它包含很多元素。
+  * 对于列表类型，该函数返回表示该列表的 quicklist 中的元素数量。
+  */
 size_t lazyfreeGetFreeEffort(robj *obj) {
     if (obj->type == OBJ_LIST) {
         quicklist *ql = obj->ptr;
@@ -78,14 +87,25 @@ size_t lazyfreeGetFreeEffort(robj *obj) {
 int dbAsyncDelete(redisDb *db, robj *key) {
     /* Deleting an entry from the expires dict will not free the sds of
      * the key, because it is shared with the main dictionary. */
+    /**
+     * 在过期key的哈希表中同步删除被淘汰的键值对
+     */
     if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
 
     /* If the value is composed of a few allocations, to free in a lazy way
      * is actually just slower... So under a certain limit we just free
      * the object synchronously. */
+    /**
+     * 在全局哈希表中异步删除被淘汰的键值对
+     * 如果一个 value 只涉及很少的内存分配，那么用 lazy-free 反而会更慢。
+     * 所以在小于某个阈值时，Redis 直接在主线程同步释放对象。
+     */
     dictEntry *de = dictUnlink(db->dict,key->ptr);
     if (de) {
         robj *val = dictGetVal(de);
+        /**
+         * 根据要删除的键值对的类型，来计算删除开销
+         */
         size_t free_effort = lazyfreeGetFreeEffort(val);
 
         /* If releasing the object is too much work, do it in the background
@@ -96,6 +116,10 @@ int dbAsyncDelete(redisDb *db, robj *key) {
          * objects, and then call dbDelete(). In this case we'll fall
          * through and reach the dictFreeUnlinkedEntry() call, that will be
          * equivalent to just calling decrRefCount(). */
+
+         /**
+          * 如果effort大于64，创建惰性删除的后台任务，交给后台线程执行
+          */
         if (free_effort > LAZYFREE_THRESHOLD && val->refcount == 1) {
             atomicIncr(lazyfree_objects,1);
             bioCreateBackgroundJob(BIO_LAZY_FREE,val,NULL,NULL);

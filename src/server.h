@@ -1250,6 +1250,9 @@ struct redisServer {
      * the server->master client structure. */
     char master_replid[CONFIG_RUN_ID_SIZE+1];  /* Master PSYNC runid. */
     long long master_initial_offset;           /* Master PSYNC offset. */
+    /**
+     * 从节点完成全量同步后，异步删除原有旧数据
+     */
     int repl_slave_lazy_flush;          /* Lazy FLUSHALL before loading DB? */
     /* Replication script cache. */
     dict *repl_scriptcache_dict;        /* SHA1 all slaves are aware of. */
@@ -1340,8 +1343,18 @@ struct redisServer {
     int lua_always_replicate_commands; /* Default replication type. */
     int lua_oom;          /* OOM detected when script start? */
     /* Lazy free */
+    /**
+     * 发生内存淘汰（eviction）时，
+     * 把“释放被淘汰 key 占用的内存”从主线程挪到后台线程异步完成
+     */
     int lazyfree_lazy_eviction;
+    /**
+     * key 因“过期”被删除时，异步释放其内存
+     */
     int lazyfree_lazy_expire;
+    /**
+     * 执行 FLUSHDB / FLUSHALL 时，异步释放内存
+     */
     int lazyfree_lazy_server_del;
     /* Latency monitor */
     long long latency_monitor_threshold;
