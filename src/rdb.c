@@ -1236,6 +1236,9 @@ int rdbSaveRio(rio *rdb, int *error, int flags, rdbSaveInfo *rsi) {
             /* When this RDB is produced as part of an AOF rewrite, move
              * accumulated diff from parent to child while rewriting in
              * order to have a smaller final write. */
+            /**
+             * 混合持久化开启时，从parent读取差异化数据
+             */
             if (flags & RDB_SAVE_AOF_PREAMBLE &&
                 rdb->processed_bytes > processed+AOF_READ_DIFF_INTERVAL_BYTES)
             {
