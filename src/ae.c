@@ -142,6 +142,7 @@ void aeStop(aeEventLoop *eventLoop) {
 }
 
 /**
+ * 把“某个 fd 在某种 IO 条件下要执行的回调函数”注册进事件循环
  * event driven programming中的事件注册
  *
  * 参数

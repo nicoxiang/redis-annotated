@@ -1225,13 +1225,34 @@ struct redisServer {
     int repl_diskless_sync;         /* Send RDB to slaves sockets directly. */
     int repl_diskless_sync_delay;   /* Delay to start a diskless repl BGSAVE. */
     /* Replication (slave) */
+
+    /**
+     * 用于和主库进行验证的密码
+     */
     char *masterauth;               /* AUTH with this password with master */
+    /**
+     * 主库主机名
+     */
     char *masterhost;               /* Hostname of master */
+    /**
+     * 主库端口号
+     */
     int masterport;                 /* Port of master */
     int repl_timeout;               /* Timeout after N seconds of master idle */
+    /**
+     * 当前 slave 正在使用的 master 连接
+     * 正在复制中存在
+     */
     client *master;     /* Client that is master for this slave */
+    /**
+     * 被缓存的旧 master 状态
+     * 它是一个已经断开的 master client，为了PSYNC能复用
+     */
     client *cached_master; /* Cached master to be reused for PSYNC. */
     int repl_syncio_timeout; /* Timeout for synchronous I/O calls */
+    /**
+     * 从库的复制状态机
+     */
     int repl_state;          /* Replication status if the instance is a slave */
     off_t repl_transfer_size; /* Size of RDB to read from master during sync. */
     off_t repl_transfer_read; /* Amount of RDB read from master during sync. */
