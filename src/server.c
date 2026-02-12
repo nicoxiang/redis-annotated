@@ -1596,6 +1596,7 @@ void createSharedObjects(void) {
         shared.integers[j]->encoding = OBJ_ENCODING_INT;
     }
     for (j = 0; j < OBJ_SHARED_BULKHDR_LEN; j++) {
+        //multi bulk 协议头字符串对象
         shared.mbulkhdr[j] = createObject(OBJ_STRING,
             sdscatprintf(sdsempty(),"*%d\r\n",j));
         shared.bulkhdr[j] = createObject(OBJ_STRING,
@@ -4202,6 +4203,11 @@ void memtest(size_t megabytes, int passes);
 
 /* Returns 1 if there is --sentinel among the arguments or if
  * argv[0] contains "redis-sentinel". */
+/**
+ * 判断是否是哨兵模式启动
+ * 1.执行的命令本身，也就是argv[0]，是否为“redis-sentinel”
+ * 2.执行的命令参数中，是否有“–sentinel”
+ */
 int checkForSentinelMode(int argc, char **argv) {
     int j;
 

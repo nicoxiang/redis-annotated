@@ -55,16 +55,30 @@ int clientSubscriptionsCount(client *c) {
 
 /* Subscribe a client to a channel. Returns 1 if the operation succeeded, or
  * 0 if the client was already subscribed to that channel. */
+/**
+ * 将一个客户端订阅到指定的频道
+ * 如果操作成功，返回1；如果已经订阅过该频道，返回0
+ */
 int pubsubSubscribeChannel(client *c, robj *channel) {
     dictEntry *de;
     list *clients = NULL;
     int retval = 0;
 
     /* Add the channel to the client -> channels hash table */
+    /**
+     * 把频道加入到 client -> pubsub_channels
+     * 注意这里添加的是 client，和下面的 server.pubsub_channels 不同
+     */
     if (dictAdd(c->pubsub_channels,channel,NULL) == DICT_OK) {
         retval = 1;
         incrRefCount(channel);
         /* Add the client to the channel -> list of clients hash table */
+
+        /**
+         * 在 server.pubsub_channels 中查找 channel 是否存在
+         * 如果不存在则插入，key 是 channel，value 是新建的空的 clients 列表；
+         * 如果存在则获取现有的 clients list
+         */
         de = dictFind(server.pubsub_channels,channel);
         if (de == NULL) {
             clients = listCreate();
@@ -73,9 +87,17 @@ int pubsubSubscribeChannel(client *c, robj *channel) {
         } else {
             clients = dictGetVal(de);
         }
+        //clients list 追加当前 client
         listAddNodeTail(clients,c);
     }
     /* Notify the client */
+
+    /**
+     * *3\r\n
+     * $9\r\nsubscribe\r\n
+     * ${channel_length}\r\n{channel}\r\n
+     * :<subscription_count>\r\n
+     */
     addReply(c,shared.mbulkhdr[3]);
     addReply(c,shared.subscribebulk);
     addReplyBulk(c,channel);
@@ -222,6 +244,12 @@ int pubsubUnsubscribeAllPatterns(client *c, int notify) {
 }
 
 /* Publish a message */
+
+/**
+ * 发布消息
+ * @param channel 发布消息的频道
+ * @param message 要发布的具体消息
+ */
 int pubsubPublishMessage(robj *channel, robj *message) {
     int receivers = 0;
     dictEntry *de;
@@ -229,16 +257,25 @@ int pubsubPublishMessage(robj *channel, robj *message) {
     listIter li;
 
     /* Send to clients listening for that channel */
+    //发送消息给监听这个 channel 的 clients
+    //在 dict 中查找 channel
     de = dictFind(server.pubsub_channels,channel);
     if (de) {
         list *list = dictGetVal(de);
         listNode *ln;
         listIter li;
 
+        //遍历频道对应的订阅者，向订阅者发送要发布的消息
         listRewind(list,&li);
         while ((ln = listNext(&li)) != NULL) {
             client *c = ln->value;
 
+            /**
+             * *3\r\n
+             * $7\r\nmessage\r\n
+             * ${channel_length}\r\n{channel}\r\n
+             * ${message_length}\r\n{message}\r\n
+             */
             addReply(c,shared.mbulkhdr[3]);
             addReply(c,shared.messagebulk);
             addReplyBulk(c,channel);
@@ -247,16 +284,30 @@ int pubsubPublishMessage(robj *channel, robj *message) {
         }
     }
     /* Send to clients listening to matching channels */
+    //遍历模式订阅 patterns
     if (listLength(server.pubsub_patterns)) {
         listRewind(server.pubsub_patterns,&li);
         channel = getDecodedObject(channel);
         while ((ln = listNext(&li)) != NULL) {
             pubsubPattern *pat = ln->value;
 
+            /**
+             * 检查传入的 channel 是否匹配 patterns
+             * 采用的是 Glob-style pattern matching
+             * 最后一个参数可以看出是大小写敏感
+             */
             if (stringmatchlen((char*)pat->pattern->ptr,
                                 sdslen(pat->pattern->ptr),
                                 (char*)channel->ptr,
                                 sdslen(channel->ptr),0)) {
+
+                /**
+                 * *4\r\n
+                 * $8\r\npmessage\r\n
+                 * ${pattern_length}\r\n{pattern}\r\n
+                 * ${channel_length}\r\n{channel}\r\n
+                 * ${message_length}\r\n{message}\r\n
+                 */                    
                 addReply(pat->client,shared.mbulkhdr[4]);
                 addReply(pat->client,shared.pmessagebulk);
                 addReplyBulk(pat->client,pat->pattern);

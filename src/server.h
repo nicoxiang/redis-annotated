@@ -1323,7 +1323,14 @@ struct redisServer {
     mstime_t mstime;            /* 'unixtime' in milliseconds. */
     ustime_t ustime;            /* 'unixtime' in microseconds. */
     /* Pubsub */
+    /**
+     * Pubsub channel dict
+     * key 是频道的名称，value 是订阅频道的订阅者
+     */
     dict *pubsub_channels;  /* Map channels to list of subscribed clients */
+    /**
+     * Pubsub 模式订阅（pattern subscription）的 patterns
+     */
     list *pubsub_patterns;  /* A list of pubsub_patterns */
     int notify_keyspace_events; /* Events to propagate via Pub/Sub. This is an
                                    xor of NOTIFY_... flags. */
