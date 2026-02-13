@@ -2745,6 +2745,9 @@ int processCommand(client *c) {
      * 2) The command has no key arguments. */
     /**
      * 集群模式下的重定向检查
+     * 以下情况不执行重定向：
+     * 1.命令的发送方是我们的 master
+     * 2.命令没有 key 参数（除了exec）
      */
     if (server.cluster_enabled &&
         !(c->flags & CLIENT_MASTER) &&
@@ -2760,13 +2763,18 @@ int processCommand(client *c) {
                                         &hashslot,&error_code);
         //如果目标节点不是本节点                                        
         if (n == NULL || n != server.cluster->myself) {
-            //如果正在执行EXEC，彻底放弃当前客户端正在进行的事务，并把客户端状态恢复到“非事务模式”
+            //如果正在执行EXEC，彻底放弃当前客户端正在进行的事务
             if (c->cmd->proc == execCommand) {
                 discardTransaction(c);
             } else {
+                /**
+                 * 如果当前命令不是 EXEC，而是一个普通命令，则调用 flagTransaction。
+                 * 给当前 client 打上 CLIENT_DIRTY_EXEC flag，
+                 * 如果后面执行了 EXEC，就会判断这个标记，随即也会放弃执行事务
+                 */
                 flagTransaction(c);
             }
-            //给客户端返回 MOVED/ASK/.. 重定向
+            //给客户端返回 MOVED/ASK 重定向
             clusterRedirectClient(c,n,hashslot,error_code);
             return C_OK;
         }

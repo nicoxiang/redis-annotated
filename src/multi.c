@@ -72,12 +72,15 @@ void queueMultiCommand(client *c) {
 }
 
 /**
- * 彻底放弃当前客户端正在进行的事务，并把客户端状态恢复到“非事务模式”
+ * 彻底放弃当前客户端正在进行的事务
  */
 void discardTransaction(client *c) {
+    //重置 MULTI/EXEC state
     freeClientMultiState(c);
     initClientMultiState(c);
+    //清除 client 事务 flags
     c->flags &= ~(CLIENT_MULTI|CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC);
+    //放弃事务中 watch 的 key
     unwatchAllKeys(c);
 }
 
