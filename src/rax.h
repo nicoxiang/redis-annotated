@@ -130,6 +130,10 @@ typedef struct raxNode {
     unsigned char data[];
 } raxNode;
 
+/**
+ * Radix Tree（压缩前缀树，基数树）
+ * 
+ */
 typedef struct rax {
     raxNode *head;
     uint64_t numele;
