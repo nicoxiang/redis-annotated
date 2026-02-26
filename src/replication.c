@@ -84,6 +84,12 @@ void createReplicationBacklog(void) {
     /* We don't have any data inside our buffer, but virtually the first
      * byte we have is the next byte that will be generated for the
      * replication stream. */
+
+     /**
+      * 如果 master_repl_offset = 100，即表示已经写入复制流 1~100
+      * backlog 刚创建时空的，还没有写入任何复制数据，那么第一个有效字节应该是下一次将要生成的字节，即101
+      * repl_backlog_off 不能等于100，因为 backlog 还没有任何数据，offset 100 的字节并不在 backlog 里
+      */
     server.repl_backlog_off = server.master_repl_offset+1;
 }
 
@@ -124,27 +130,82 @@ void freeReplicationBacklog(void) {
  * This function also increments the global replication offset stored at
  * server.master_repl_offset, because there is no case where we want to feed
  * the backlog without incrementing the offset. */
+/**
+ * 往复制循环缓冲区添加数据，同时增加全局的复制偏移量 server.master_repl_offset
+ * 
+ * @param ptr 指向要写入缓冲区的数据
+ * @param len 要写入的数据长度
+ */
 void feedReplicationBacklog(void *ptr, size_t len) {
     unsigned char *p = ptr;
 
+    //将全局复制偏移量增加数据长度
     server.master_repl_offset += len;
 
     /* This is a circular buffer, so write as much data we can at every
      * iteration and rewind the "idx" index if we reach the limit. */
+    /**
+     * 这是一个循环缓冲区，因此每次迭代时尽量多地写入数据，
+     * 如果达到了最大值，重置 idx
+     * 
+     * 举例
+     * 假设repl_backlog_size=8
+     * 
+     * 初始值
+     * thislen=0
+     * repl_backlog_idx=0
+     * repl_backlog_histlen=0
+     * repl_backlog_off=1
+     * 
+     * 第一次写入“abcde”（len=5）
+     * thislen=5
+     * repl_backlog_idx=5
+     * repl_backlog_histlen=5
+     * repl_backlog_off=1
+     * 
+     * 第二次写入“fghijklmnopqrstu”（len=16）
+     * 因为假设repl_backlog_size总长度为8，而且第一次已经写入了5，因此还需要执行3次写入循环
+     * thislen=(3,8,5)
+     * repl_backlog_idx=(0,0,5)
+     * repl_backlog_histlen=(8,16,21) -> 循环结束后更新为8
+     * repl_backlog_off=21-8+1=14
+     */
     while(len) {
+        /**
+         * 计算从当前索引位置到缓冲区末尾还有多少空间（thislen）。
+         * 如果可用空间大于要写入的数据量（thislen > len），就只使用我们拥有的数据量，
+         * 最后得到 thislen 就是本轮要写入的数据量
+         */
         size_t thislen = server.repl_backlog_size - server.repl_backlog_idx;
         if (thislen > len) thislen = len;
+        //memcpy写入缓冲区
         memcpy(server.repl_backlog+server.repl_backlog_idx,p,thislen);
+        /**
+         * 写指针位置往后移动 thislen
+         * 如果我们已经到达缓冲区末尾，就环绕回开始位置。
+         */
         server.repl_backlog_idx += thislen;
         if (server.repl_backlog_idx == server.repl_backlog_size)
             server.repl_backlog_idx = 0;
+        /**
+         * 减少剩余数据长度，并为下一次迭代前进源指针
+         */    
         len -= thislen;
         p += thislen;
+        /**
+         * 追踪已写入回放日志的总历史长度
+         * 注意循环结束后会二次更新确保历史长度永远不会超过实际缓冲区大小。
+         */
         server.repl_backlog_histlen += thislen;
     }
     if (server.repl_backlog_histlen > server.repl_backlog_size)
         server.repl_backlog_histlen = server.repl_backlog_size;
     /* Set the offset of the first byte we have in the backlog. */
+
+    /**
+     * 计算并更新复制循环缓冲区最早保存的数据的首字节在全局范围内的偏移，
+     * 从节点在部分重新同步（PSYNC）期间使用这个值来了解它们可以请求哪些数据
+     */
     server.repl_backlog_off = server.master_repl_offset -
                               server.repl_backlog_histlen + 1;
 }
@@ -342,6 +403,9 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
 
 /* Feed the slave 'c' with the replication backlog starting from the
  * specified 'offset' up to the end of the backlog. */
+/**
+ * 把 replication backlog 中，从指定 offset 开始的那段历史复制数据，发送给指定的 replica 客户端
+ */
 long long addReplyReplicationBacklog(client *c, long long offset) {
     long long j, skip, len;
 
@@ -362,33 +426,86 @@ long long addReplyReplicationBacklog(client *c, long long offset) {
              server.repl_backlog_idx);
 
     /* Compute the amount of bytes we need to discard. */
+    /**
+     * skip: 从 backlog 起点开始要跳过多少字节
+     * 
+     * 举例
+     * repl_backlog_size = 1000
+     * repl_backlog_histlen = 1000   (说明已经写满过)
+     * repl_backlog_idx = 700
+     * master_repl_offset = 4700
+     * slave 请求 offset = 3800
+     * 缓冲区当前保存的是 [4001...4700][3701...4000]
+     * 
+     * skip = 3800-3701 = 99
+     */
     skip = offset - server.repl_backlog_off;
     serverLog(LL_DEBUG, "[PSYNC] Skipping: %lld", skip);
 
     /* Point j to the oldest byte, that is actually our
      * server.repl_backlog_off byte. */
+    /**
+     * j代表第一个byte在循环数组中的下标
+     * 
+     * 如果缓冲区还没有写满，repl_backlog_idx=repl_backlog_histlen，j=0
+     * 如果缓冲区已写满过，repl_backlog_size=repl_backlog_histlen，j=repl_backlog_idx
+     */
     j = (server.repl_backlog_idx +
         (server.repl_backlog_size-server.repl_backlog_histlen)) %
         server.repl_backlog_size;
     serverLog(LL_DEBUG, "[PSYNC] Index of first byte: %lld", j);
 
     /* Discard the amount of data to seek to the specified 'offset'. */
+
+    /**
+     * 从哪个位置开始读取
+     * 
+     * 举例
+     * j=(700+99)%1000=799
+     * 最后计算得出从节点从循环数组的799开始读取
+     */
     j = (j + skip) % server.repl_backlog_size;
 
     /* Feed slave with data. Since it is a circular buffer we have to
      * split the reply in two parts if we are cross-boundary. */
+    /**
+     * 实际要读取的数据长度
+     * 
+     * 举例
+     * len=1000-99=901
+     */
     len = server.repl_backlog_histlen - skip;
     serverLog(LL_DEBUG, "[PSYNC] Reply total length: %lld", len);
+    /**
+     * 因为在循环缓冲区中，从节点可能从读取起始位置一直读到缓冲区尾后，
+     * 还没有读完，还要再从缓冲区头继续读取。这就要分成两次来读取了。
+     * 
+     * 举例
+     * 第一轮
+     * thislen=1000-799=201
+     * len=700
+     * j=0
+     * 
+     * 第二轮
+     * thislen=700
+     * len=0
+     */
     while(len) {
         long long thislen =
             ((server.repl_backlog_size - j) < len) ?
             (server.repl_backlog_size - j) : len;
 
         serverLog(LL_DEBUG, "[PSYNC] addReply() length: %lld", thislen);
+        //实际读取并返回数据
         addReplySds(c,sdsnewlen(server.repl_backlog + j, thislen));
         len -= thislen;
         j = 0;
     }
+    /**
+     * 返回需要发送给从节点的总字节数
+     * 举例
+     * 1000-99=901
+     */
     return server.repl_backlog_histlen - skip;
 }
 
@@ -445,6 +562,10 @@ int replicationSetupSlaveForFullResync(client *slave, long long offset) {
  *
  * On success return C_OK, otherwise C_ERR is returned and we proceed
  * with the usual full resync. */
+
+/**
+ * master 收到 slave PSYNC <runid> <offset> 命令后，尝试进行部分重同步
+ */
 int masterTryPartialResynchronization(client *c) {
     long long psync_offset, psync_len;
     char *master_replid = c->argv[1]->ptr;
@@ -489,6 +610,13 @@ int masterTryPartialResynchronization(client *c) {
     }
 
     /* We still have the data our slave is asking for? */
+
+    /**
+     * 下面3种情况需要转全量复制
+     * 1.首次复制
+     * 2.从节点请求的数据 比 backlog 里最旧的数据还要旧
+     * 3.从节点请求的 offset 超过了 backlog 里“已写入的数据的最大边界”
+     */
     if (!server.repl_backlog ||
         psync_offset < server.repl_backlog_off ||
         psync_offset > (server.repl_backlog_off + server.repl_backlog_histlen))
@@ -523,6 +651,7 @@ int masterTryPartialResynchronization(client *c) {
         freeClientAsync(c);
         return C_OK;
     }
+    //读取复制循环缓冲区中的数据
     psync_len = addReplyReplicationBacklog(c,psync_offset);
     serverLog(LL_NOTICE,
         "Partial resynchronization request from %s accepted. Sending %lld bytes of backlog starting from offset %lld.",
@@ -691,6 +820,11 @@ void syncCommand(client *c) {
     listAddNodeTail(server.slaves,c);
 
     /* Create the replication backlog if needed. */
+
+    /**
+     * 创建循环缓冲区的方法 createReplicationBacklog 在 syncCommand() 中被调用
+     * 只有在第一个 slave 发送 PSYNC 且之前 master 还没创建过 repl_backlog 时才需要初始化循环缓冲区 
+     */
     if (listLength(server.slaves) == 1 && server.repl_backlog == NULL) {
         /* When we create the backlog from scratch, we always use a new
          * replication ID and clear the ID2, since there is no valid

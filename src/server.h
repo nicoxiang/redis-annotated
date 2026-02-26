@@ -1204,15 +1204,47 @@ struct redisServer {
     /* Replication (master) */
     char replid[CONFIG_RUN_ID_SIZE+1];  /* My current replication ID. */
     char replid2[CONFIG_RUN_ID_SIZE+1]; /* replid inherited from master*/
+    /**
+     * 主节点当前已经生成的“复制流”的全局字节偏移量
+     */
     long long master_repl_offset;   /* My current replication offset */
     long long second_replid_offset; /* Accept offsets up to this for replid2. */
     int slaveseldb;                 /* Last SELECTed DB in replication output */
     int repl_ping_slave_period;     /* Master pings the slave every N seconds */
+    /**
+     * 用于部分复制的基于字符数组的复制积压循环缓冲区
+     */
     char *repl_backlog;             /* Replication backlog for partial syncs */
+    /**
+     * 复制循环缓冲区的总长度
+     * 对应了redis.conf配置文件中的repl-backlog-size配置项
+     */
     long long repl_backlog_size;    /* Backlog circular buffer size */
+    /**
+     * 复制循环缓冲区中当前累积的数据的长度
+     * 这个值不会超过缓冲区的总长度
+     */
     long long repl_backlog_histlen; /* Backlog actual data length */
+    /**
+     * 复制循环缓冲区写指针的位置
+     * 写指针表示主节点在缓冲区中的当前写入位置，如果写指针已经指向了缓冲区末尾，
+     * 那么此时主节点再写入数据，写指针就会重新指向缓冲区头部，从头部开始再次写入数据，这样就可以复用缓冲区空间
+     */
     long long repl_backlog_idx;     /* Backlog circular buffer current offset,
                                        that is the next byte will'll write to.*/
+    
+    /**
+     * 当前 backlog buffer 中 第一个字节 在全局复制流里的 offset
+     * 因为循环缓冲区会被重复使用，所以一旦缓冲区写满后，又开始从头写数据时，缓冲区中的旧数据会被覆盖。
+     * 因此，这个值就记录了仍然保存在缓冲区中，又是最早写入的数据的首字节，在全局范围内的偏移量
+     * 
+     * 假设
+     * repl_backlog_size = 1000 
+     * master_repl_offset = 5000
+     * 
+     * backlog 保存的是 [4001 ... 5000]
+     * 那么 repl_backlog_off = 4001
+     */                                   
     long long repl_backlog_off;     /* Replication "master offset" of first
                                        byte in the replication backlog buffer.*/
     time_t repl_backlog_time_limit; /* Time without slaves after the backlog
